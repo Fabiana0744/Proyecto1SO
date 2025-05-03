@@ -49,7 +49,7 @@ void my_thread_register_main() {
 
         current_thread = &main_thread;
 
-        enqueue_thread(&main_thread);  // 👈 Esto es CLAVE para evitar el segfault
+        enqueue_thread(&main_thread); 
         registered = true;
     }
 }
@@ -108,6 +108,8 @@ int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_ro
     // Guardamos el contexto pero aún no se ejecuta, eso lo hace el scheduler
     return 0;
 }
+
+
 
 void my_thread_end() {
     current_thread->finished = true;
