@@ -128,11 +128,11 @@ void my_thread_end() {
 
 void my_thread_yield() {
     my_thread_t *prev = get_current_thread();
-    my_thread_t *next = my_scheduler_next();  // usa el scheduler correcto
+    my_thread_t *next = my_scheduler_next();
 
-    if (!next) {
-        printf("Todos los hilos han terminado.\n");
-        exit(0);
+    if (!next || next == prev) {
+        // No hay nadie más a quién cambiar o ya estamos en el único hilo vivo
+        return;
     }
 
     set_current_thread(next);

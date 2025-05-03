@@ -44,6 +44,7 @@ void set_current_thread(my_thread_t *thread);
 
 // Declaraciones principales
 int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_routine)(void *), void *arg);
+int my_thread_create_default(my_thread_t **thread, void (*start_routine)(void *), void *arg);
 void my_thread_end();
 void my_thread_yield();
 int my_thread_join(my_thread_t *thread);

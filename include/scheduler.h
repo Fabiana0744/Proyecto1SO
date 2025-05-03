@@ -3,10 +3,11 @@
 
 #include "mypthreads.h"
 
-// Función genérica que llama al scheduler correspondiente
-my_thread_t* my_scheduler_next();
+// Prototipos de funciones para cada scheduler
+my_thread_t* scheduler_next_thread();      // Round Robin
+my_thread_t* scheduler_next_lottery();     // Lottery
 
-// Función específica del Round Robin
-my_thread_t* scheduler_next_thread();
+// Función principal que decide según el tipo
+my_thread_t* my_scheduler_next();
 
 #endif
