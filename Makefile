@@ -1,12 +1,15 @@
 CC = gcc
 CFLAGS = -Wall -g
 INCLUDE = -Iinclude
-SRC = src/mypthreads.c src/scheduler.c src/scheduler_rr.c src/scheduler_lottery.c src/scheduler_realtime.c
+
+SRC = src/mypthreads.c src/scheduler.c src/scheduler_rr.c src/scheduler_lottery.c
+ANIM_SRC = anim/parser.c
+TEST = examples/test_threads.c
 
 all: test_threads
 
 test_threads:
-	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) examples/test_threads.c -o test_threads
+	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) $(TEST) -o test_threads
 
 test_mutex:
 	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) examples/test_mutex.c -o test_mutex
@@ -14,8 +17,8 @@ test_mutex:
 test_lottery:
 	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) examples/test_lottery.c -o test_lottery
 
-test_realtime:
-	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) examples/test_realtime.c -o test_realtime
+parser:
+	$(CC) $(CFLAGS) $(INCLUDE) $(ANIM_SRC) -o parser
 
 clean:
-	rm -f test_threads test_mutex test_lottery test_realtime
+	rm -f test_threads test_mutex test_lottery parser
