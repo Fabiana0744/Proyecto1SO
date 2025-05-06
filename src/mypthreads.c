@@ -5,21 +5,18 @@
 
 static int thread_counter = 0;
 static my_thread_t *current_thread = NULL;
-static my_thread_t *thread_list = NULL;
-
-
 
 void enqueue_thread(my_thread_t *new_thread) {
-    if (!thread_list) {
-        thread_list = new_thread;
-        new_thread->next = new_thread;
-    } else {
-        my_thread_t *temp = thread_list;
-        while (temp->next != thread_list) {
-            temp = temp->next;
-        }
-        temp->next = new_thread;
-        new_thread->next = thread_list;
+    switch (new_thread->sched) {
+        case SCHED_RR:
+            scheduler_rr_add(new_thread);
+            break;
+        case SCHED_LOTTERY:
+            scheduler_lottery_add(new_thread);
+            break;
+        case SCHED_REALTIME:
+            scheduler_realtime_add(new_thread);
+            break;
     }
 }
 
@@ -31,8 +28,7 @@ void set_current_thread(my_thread_t *thread) {
     current_thread = thread;
 }
 
-
-// --------------- FUNCIONES SILARES PARA CONSIDERAR O NO EL HILO PRINCIPAL ---------------------
+// --------------- HILO PRINCIPAL ---------------------
 
 void my_thread_register_main() {
     static my_thread_t main_thread;
@@ -49,23 +45,12 @@ void my_thread_register_main() {
 
         current_thread = &main_thread;
 
-        enqueue_thread(&main_thread); 
+        scheduler_rr_add(&main_thread);
         registered = true;
     }
 }
 
-
-void my_thread_start(my_thread_t *thread) {
-    my_thread_t *prev = current_thread;
-    current_thread = thread;
-
-    if (swapcontext(&prev->context, &thread->context) == -1) {
-        perror("swapcontext");
-    }
-}
-
-
-// --------------- FUNCIONES PRINCIPALES DE PTHREADS ---------------------
+// --------------- FUNCIONES PRINCIPALES DE MYPTHREADS ---------------------
 
 int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_routine)(void *), void *arg) {
     *thread = malloc(sizeof(my_thread_t));
@@ -75,6 +60,8 @@ int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_ro
     (*thread)->sched = sched;
     (*thread)->finished = false;
     (*thread)->waiting_for_me = NULL;
+    (*thread)->detached = false;
+    (*thread)->joined = false;
     (*thread)->tickets = 1;
     (*thread)->deadline = 0;
     (*thread)->next = NULL;
@@ -100,16 +87,21 @@ int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_ro
     (*thread)->context.uc_stack.ss_size = STACK_SIZE;
     (*thread)->context.uc_stack.ss_flags = 0;
 
-    // Empaquetar la función a ejecutar
     makecontext(&(*thread)->context, (void (*)())start_routine, 1, arg);
 
-    enqueue_thread(*thread);
+    enqueue_thread(*thread);  // Encolar en su scheduler
 
-    // Guardamos el contexto pero aún no se ejecuta, eso lo hace el scheduler
     return 0;
 }
 
+void my_thread_start(my_thread_t *thread) {
+    my_thread_t *prev = current_thread;
+    current_thread = thread;
 
+    if (swapcontext(&prev->context, &thread->context) == -1) {
+        perror("swapcontext");
+    }
+}
 
 void my_thread_end() {
     current_thread->finished = true;
@@ -123,19 +115,21 @@ void my_thread_end() {
         return;
     }
 
-    my_thread_yield();  // Nadie nos espera, simplemente ceder CPU
+    my_thread_t *next = my_scheduler_next();
+    if (next && next != current_thread) {
+        set_current_thread(next);
+        setcontext(&next->context);  // salto sin volver
+    } else {
+        exit(0);   // fin correcto si ya no queda nada
+    }
 }
-
 
 
 void my_thread_yield() {
     my_thread_t *prev = get_current_thread();
     my_thread_t *next = my_scheduler_next();
 
-    if (!next || next == prev) {
-        // No hay nadie más a quién cambiar o ya estamos en el único hilo vivo
-        return;
-    }
+    if (!next || next == prev) return;
 
     set_current_thread(next);
 
@@ -144,45 +138,36 @@ void my_thread_yield() {
     }
 }
 
-
 int my_thread_join(my_thread_t *thread) {
-    if (thread->detached || thread->joined) {
-        return -1;  // No se puede hacer join
-    }
+    if (thread->detached || thread->joined) return -1;
 
     thread->joined = true;
 
-    if (thread->finished) {
-        return 0;  // Ya terminó
-    }
+    if (thread->finished) return 0;
 
-    // Guardar el contexto del que espera
     if (getcontext(&current_thread->join_context) == -1) {
         perror("getcontext join");
         return -1;
     }
 
-    // Enlazar quien espera a quien
     thread->waiting_for_me = current_thread;
 
-    my_thread_yield();  // Ceder CPU hasta que el otro hilo termine
+    my_thread_yield();  // Esperar a que termine
 
     return 0;
 }
 
-
 int my_thread_detach(my_thread_t *thread) {
-    if (thread->joined) return -1; // Ya hay alguien esperando
+    if (thread->joined) return -1;
     thread->detached = true;
     return 0;
 }
 
-
 int my_thread_chsched(my_thread_t *thread, scheduler_type sched) {
     thread->sched = sched;
+    enqueue_thread(thread);  // Reagregar al nuevo scheduler
     return 0;
 }
-
 
 // --------------- MUTEX ---------------------
 
@@ -194,18 +179,16 @@ int my_mutex_init(my_mutex_t *mutex) {
 
 int my_mutex_lock(my_mutex_t *mutex) {
     while (__sync_lock_test_and_set(&mutex->locked, true)) {
-        // Ya está bloqueado, entonces cedo CPU para esperar
-        my_thread_yield();
+        my_thread_yield();  // Esperar hasta que se libere
     }
 
     mutex->owner = current_thread->id;
     return 0;
 }
 
-
 int my_mutex_unlock(my_mutex_t *mutex) {
     if (!mutex->locked || mutex->owner != get_current_thread()->id) {
-        return -1;  // Error: no está bloqueado o no somos los dueños
+        return -1;
     }
 
     mutex->owner = -1;
@@ -213,22 +196,17 @@ int my_mutex_unlock(my_mutex_t *mutex) {
     return 0;
 }
 
-
 int my_mutex_trylock(my_mutex_t *mutex) {
     if (__sync_lock_test_and_set(&mutex->locked, true)) {
-        return -1;  // Ya está bloqueado
+        return -1;
     }
 
     mutex->owner = get_current_thread()->id;
     return 0;
 }
 
-
-
 int my_mutex_destroy(my_mutex_t *mutex) {
-    if (mutex->locked) return -1;  // No destruir si está en uso
+    if (mutex->locked) return -1;
     mutex->owner = -1;
     return 0;
 }
-
-
