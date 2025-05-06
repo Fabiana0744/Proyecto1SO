@@ -1,6 +1,8 @@
 #include "../include/mypthreads.h"
 #include "../include/scheduler.h"
 #include <stdlib.h>          // rand()
+#include <stdio.h>
+
 
 /* Sortea un entero en [1..N] */
 static inline int rand_1_N(int N) { return (rand() % N) + 1; }
@@ -24,6 +26,10 @@ my_thread_t* scheduler_next_lottery(void)
     /* 2) Sacar un número ganador */
     int ganador = rand_1_N(total);
 
+    printf("🎟️  Total tickets: %d\n", total);
+    printf("🎯 Número ganador: %d\n", ganador);
+
+
     /* 3) Recorrer de nuevo y hallar al afortunado */
     t = head;
     int acumulado = 0;
@@ -35,6 +41,8 @@ my_thread_t* scheduler_next_lottery(void)
         }
         t = t->next;
     } while (t != head);
+
+
 
     return NULL;             // seguridad
 }

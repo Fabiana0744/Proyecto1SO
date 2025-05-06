@@ -1,182 +1,220 @@
+/* anim/main.c ---------------------------------------------------- */
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include "../include/anim.h"
-#include <unistd.h>  // for usleep()
+#include "../include/mypthreads.h"
+#include <time.h>
 
-void load_canvas(FILE *file, Canvas *canvas) {
-    char line[128];
-    while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, "[canvas]", 8) == 0) {
-            while (fgets(line, sizeof(line), file) && line[0] != '[') {
-                if (sscanf(line, "width=%d", &canvas->width) == 1) continue;
-                if (sscanf(line, "height=%d", &canvas->height) == 1) continue;
+
+#define MAX_OBJECTS     10
+#define FRAME_DELAY_US  120000   /* 0.12 s */
+
+/* ======== CANVAS GLOBAL (buffer + mutex) ======================== */
+static char **g_buf = NULL;
+static int    g_w = 0, g_h = 0;
+static my_mutex_t canvas_lock;
+
+/* -- buffer helpers --------------------------------------------- */
+static void canvas_clear(void){
+    for (int y = 0; y < g_h; y++) memset(g_buf[y], ' ', g_w);
+}
+static void canvas_overlay(const Shape *sh, int px, int py){
+    for (int r = 0; r < sh->num_lines; r++){
+        int y = py + r; if (y < 0 || y >= g_h) continue;
+        for (int c = 0; c < (int)strlen(sh->lines[r]); c++){
+            int x = px + c; if (x < 0 || x >= g_w) continue;
+            if (sh->lines[r][c] != ' ') g_buf[y][x] = sh->lines[r][c];
+        }
+    }
+}
+static void canvas_print(long id){
+    putchar('+'); for (int i = 0; i < g_w; i++) putchar('-'); puts("+");
+    for (int y = 0; y < g_h; y++){
+        putchar('|'); fwrite(g_buf[y], 1, g_w, stdout); puts("|");
+    }
+    putchar('+'); for (int i = 0; i < g_w; i++) putchar('-');
+    printf("+  <frame %ld>\n", id);
+}
+
+/* -- init/free --------------------------------------------------- */
+static void canvas_init(int w, int h){
+    g_w = w; g_h = h;
+    g_buf = malloc(g_h * sizeof *g_buf);
+    for (int y = 0; y < g_h; y++){
+        g_buf[y] = malloc(g_w + 1); g_buf[y][g_w] = '\0';
+    }
+    my_mutex_init(&canvas_lock);
+    canvas_clear();
+}
+static void canvas_free(void){
+    for (int y = 0; y < g_h; y++) free(g_buf[y]);
+    free(g_buf);
+}
+
+/* ======== PARSER =============================================== */
+static void unread_line(FILE *f, const char *l){
+    fseek(f, -(long)strlen(l), SEEK_CUR);
+}
+static int parse_ini(const char *path, Canvas *cv,
+                     AnimatedObject objs[], int *count){
+    FILE *f = fopen(path, "r"); if (!f) return -1;
+    char line[256]; *count = 0;
+
+    while (fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "[canvas]", 8)) {
+            while (fgets(line, sizeof line, f) && line[0] != '['){
+                sscanf(line,"width=%d",  &cv->width);
+                sscanf(line,"height=%d", &cv->height);
             }
-            break;
+            unread_line(f,line);
         }
-    }
-}
-
-void load_monitor(FILE *file, Monitor *monitor) {
-    char line[128];
-    while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, "[monitor1]", 10) == 0) {
-            while (fgets(line, sizeof(line), file) && line[0] != '[') {
-                if (sscanf(line, "name=%s", monitor->name) == 1) continue;
-                if (sscanf(line, "x=%d", &monitor->x) == 1) continue;
-                if (sscanf(line, "y=%d", &monitor->y) == 1) continue;
-                if (sscanf(line, "width=%d", &monitor->width) == 1) continue;
-                if (sscanf(line, "height=%d", &monitor->height) == 1) continue;
+        else if (!strncmp(line,"[object",7) && *count < MAX_OBJECTS) {
+            AnimatedObject *o = &objs[(*count)++];
+            memset(o, 0, sizeof *o);
+            while (fgets(line, sizeof line, f) && line[0] != '['){
+                sscanf(line, "name=%s", o->name);
+                sscanf(line, "scheduler=%s", o->scheduler_type);
+                sscanf(line, "shape=%s", o->shape_path);
+                sscanf(line, "start_x=%d", &o->start_x);
+                sscanf(line, "start_y=%d", &o->start_y);
+                sscanf(line, "end_x=%d", &o->end_x);
+                sscanf(line, "end_y=%d", &o->end_y);
+                sscanf(line, "time_start=%d", &o->time_start);
+                sscanf(line, "time_end=%d", &o->time_end);
+                sscanf(line, "rotation_start=%d", &o->rotation_start);
+                sscanf(line, "rotation_end=%d", &o->rotation_end);
+                sscanf(line, "tickets=%d", &o->tickets);
             }
-            break;
+            unread_line(f,line);
         }
     }
-}
-
-void load_object(FILE *file, AnimatedObject *obj) {
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, "[object1]", 9) == 0) {
-            while (fgets(line, sizeof(line), file) && line[0] != '[') {
-                if (sscanf(line, "name=%s", obj->name) == 1) continue;
-                if (sscanf(line, "scheduler=%s", obj->scheduler_type) == 1) continue;
-                if (sscanf(line, "shape=%s", obj->shape_path) == 1) continue;
-                if (sscanf(line, "start_x=%d", &obj->start_x) == 1) continue;
-                if (sscanf(line, "start_y=%d", &obj->start_y) == 1) continue;
-                if (sscanf(line, "end_x=%d", &obj->end_x) == 1) continue;
-                if (sscanf(line, "end_y=%d", &obj->end_y) == 1) continue;
-                if (sscanf(line, "time_start=%d", &obj->time_start) == 1) continue;
-                if (sscanf(line, "time_end=%d", &obj->time_end) == 1) continue;
-                if (sscanf(line, "rotation_start=%d", &obj->rotation_start) == 1) continue;
-                if (sscanf(line, "rotation_end=%d", &obj->rotation_end) == 1) continue;
-            }
-            break;
-        }
-    }
-}
-
-// Loads the ASCII shape from a file into a Shape struct
-int load_shape(const char *path, Shape *shape) {
-    FILE *file = fopen(path, "r");
-    if (!file) {
-        perror("Failed to open shape file");
-        return -1;
-    }
-
-    shape->num_lines = 0;
-    while (fgets(shape->lines[shape->num_lines], MAX_LINE_LENGTH, file)) {
-        // Remove newline
-        shape->lines[shape->num_lines][strcspn(shape->lines[shape->num_lines], "\n")] = 0;
-        shape->num_lines++;
-
-        if (shape->num_lines >= MAX_SHAPE_LINES)
-            break;
-    }
-
-    fclose(file);
-    return 0;
-}
-
-
-// Draws a shape on the canvas at a given position
-void draw_shape_on_canvas(Canvas *canvas, Shape *shape, int pos_x, int pos_y) {
-    char canvas_matrix[canvas->height][canvas->width + 1];  // +1 for null terminator
-
-    // Initialize canvas with spaces
-    for (int i = 0; i < canvas->height; i++) {
-        for (int j = 0; j < canvas->width; j++) {
-            canvas_matrix[i][j] = ' ';
-        }
-        canvas_matrix[i][canvas->width] = '\0';  // null terminator
-    }
-
-    // Overlay the shape into the canvas
-    for (int i = 0; i < shape->num_lines; i++) {
-        int canvas_y = pos_y + i;
-        if (canvas_y >= canvas->height) break;
-
-        for (int j = 0; j < strlen(shape->lines[i]); j++) {
-            int canvas_x = pos_x + j;
-            if (canvas_x >= canvas->width) break;
-
-            char ch = shape->lines[i][j];
-            if (ch != ' ') {
-                canvas_matrix[canvas_y][canvas_x] = ch;
-            }
-        }
-    }
-
-    // Print canvas
-    printf("\n📋 Canvas View (%dx%d):\n", canvas->width, canvas->height);
-    for (int i = 0; i < canvas->height; i++) {
-        printf("%s\n", canvas_matrix[i]);
-    }
-}
-
-void simulate_animation(Canvas *canvas, Shape *shape, AnimatedObject *obj) {
-    int steps = obj->end_x - obj->start_x;
-    if (steps == 0) steps = 1;  // avoid divide by zero
-
-    printf("\n🎞 Starting animation from x=%d to x=%d\n", obj->start_x, obj->end_x);
-
-    for (int step = 0; step <= steps; step++) {
-        int current_x = obj->start_x + step;
-
-        // Clear screen (terminal only)
-        printf("\033[2J\033[H");  // ANSI escape codes to clear screen and move cursor to home
-
-        printf("Frame %d (x=%d):\n", step, current_x);
-        draw_shape_on_canvas(canvas, shape, current_x, obj->start_y);
-
-        usleep(200000);  // 200ms = 0.2s delay per frame
-    }
-
-    printf("\n✅ Animation finished.\n");
-}
-
-
-
-int main() {
-    FILE *f = fopen("config/animation.ini", "r");
-    if (!f) {
-        perror("Failed to open .ini file");
-        return 1;
-    }
-
-    Canvas canvas;
-    Monitor monitor1;
-    AnimatedObject obj;
-    Shape shape;
-
-    load_canvas(f, &canvas);
-    rewind(f);
-    load_monitor(f, &monitor1);
-    rewind(f);
-    load_object(f, &obj);
     fclose(f);
-
-    // Output parsed data
-    printf("Canvas: %dx%d\n", canvas.width, canvas.height);
-    printf("Monitor: %s at (%d,%d), size: %dx%d\n",
-           monitor1.name, monitor1.x, monitor1.y, monitor1.width, monitor1.height);
-    printf("Object: %s moves (%d,%d) -> (%d,%d), time %d–%d, shape: %s\n",
-           obj.name, obj.start_x, obj.start_y, obj.end_x, obj.end_y,
-           obj.time_start, obj.time_end, obj.shape_path);
-
-    // Load and preview shape
-    if (load_shape(obj.shape_path, &shape) == 0) {
-        printf("\nPreview of shape '%s':\n", obj.name);
-        for (int i = 0; i < shape.num_lines; i++) {
-            printf("%s\n", shape.lines[i]);
-        }
-    }
-
-    draw_shape_on_canvas(&canvas, &shape, obj.start_x, obj.start_y);
-
-    simulate_animation(&canvas, &shape, &obj);
-
-
-
     return 0;
 }
 
+/* ======== HILO ANIMADOR ======================================== */
+typedef struct { AnimatedObject *obj; } ThreadArg;
+
+static void animar_objeto(void *arg){
+    AnimatedObject *o = ((ThreadArg*)arg)->obj;
+
+    /* cargar shape */
+    Shape sh = {0};
+    FILE *sf = fopen(o->shape_path, "r");
+    if (!sf){ perror("shape"); my_thread_end(); return; }
+    while (fgets(sh.lines[sh.num_lines], MAX_LINE_LENGTH, sf)
+           && sh.num_lines < MAX_SHAPE_LINES){
+        sh.lines[sh.num_lines]
+            [strcspn(sh.lines[sh.num_lines], "\n")] = '\0';
+        sh.num_lines++;
+    }
+    fclose(sf);
+
+    int steps = o->end_x - o->start_x; if (steps <= 0) steps = 1;
+    for (int s = 0; s <= steps; s++){
+        my_mutex_lock(&canvas_lock);
+        canvas_overlay(&sh, o->start_x + s, o->start_y);
+        my_mutex_unlock(&canvas_lock);
+
+        usleep(FRAME_DELAY_US / 2);
+        my_thread_yield();
+    }
+    my_thread_end();
+}
+
+/* ======== CREA HILOS =========================================== */
+static void spawn_object_threads(int n, AnimatedObject objs[],
+    my_thread_t *thr[], ThreadArg arg[]) {
+    my_thread_register_main();
+
+    for (int i = 0; i < n; i++) {
+    arg[i].obj = &objs[i];
+
+    scheduler_type st = SCHED_RR;  // valor por defecto
+    if (strcmp(objs[i].scheduler_type, "LOTTERY") == 0)
+    st = SCHED_LOTTERY;
+    else if (strcmp(objs[i].scheduler_type, "REALTIME") == 0)
+    st = SCHED_REALTIME;
+
+    my_thread_create(&thr[i], st, animar_objeto, &arg[i]);
+    printf("✅ Creado hilo %s (sched=%s, tickets=%d)\n",
+       objs[i].name, objs[i].scheduler_type, objs[i].tickets);
+
+
+    if (st == SCHED_LOTTERY)
+    thr[i]->tickets = objs[i].tickets > 0 ? objs[i].tickets : 1;
+
+    if (st == SCHED_REALTIME)
+    thr[i]->deadline = objs[i].time_end;
+    }
+}
+
+
+/* ======== PAINTER LOOP (versión correcta) ====================== */
+static void painter_loop(int n, my_thread_t *thr[])
+{
+    printf("🎬 Entrando al painter_loop\n");
+    long frame_id = 1;
+    while (1) {
+    
+        /* 👣 1. Dar tiempo a los hilos para dibujar sobre el buffer vigente */
+        my_thread_yield();
+    
+        /* 🧐 2. Verificar si todos terminaron DESPUÉS del yield */
+        int ended = 1;
+        for (int i = 0; i < n; i++)
+            if (!thr[i]->finished) { ended = 0; break; }
+    
+        /* 🎥 3. Cuando AÚN hay hilos activos, imprime y luego limpia */
+        if (!ended) {
+            printf("🎬 Entrando al IFFF DE painter_loop\n");
+
+            /* 3a. Mostrar el contenido actual */
+            my_mutex_lock(&canvas_lock);
+            printf("\033[2J\033[H");
+            canvas_print(frame_id++);
+            my_mutex_unlock(&canvas_lock);
+    
+            usleep(FRAME_DELAY_US);      /* retardo normal */
+    
+            /* 3b. Limpiar buffer para preparar el próximo cuadro */
+            my_mutex_lock(&canvas_lock);
+            canvas_clear();
+            my_mutex_unlock(&canvas_lock);
+        } else {
+            /* ✅ Todos terminaron: deja el último cuadro y sal SIN limpiar */
+            break;
+        }
+    }
+    
+}
+
+
+/* ====================== MAIN =================================== */
+int main(void)
+{
+    srand(time(NULL)); 
+    Canvas cv; AnimatedObject objs[MAX_OBJECTS];
+    int obj_count;
+
+    if (parse_ini("config/animation.ini", &cv, objs, &obj_count) != 0){
+        perror("ini"); return 1;
+    }
+
+    canvas_init(cv.width, cv.height);
+
+    my_thread_t *thr[MAX_OBJECTS];
+    ThreadArg    arg[MAX_OBJECTS];
+    spawn_object_threads(obj_count, objs, thr, arg);
+
+    
+    painter_loop(obj_count, thr);
+
+    /* dejar último frame y liberar recursos */
+    canvas_free();
+    printf("✅ Terminé el main\n");
+
+    return 0;
+}

@@ -31,6 +31,7 @@ typedef struct {
     int time_end;
     int rotation_start;
     int rotation_end;
+    int tickets;
 } AnimatedObject;
 
 

@@ -1,0 +1,141 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include "../include/anim.h"
+#include "../include/mypthreads.h"
+
+#define MAX_OBJECTS 10
+
+/* 🔒 mutex global para el canvas */
+my_mutex_t canvas_mutex;
+
+typedef struct {
+    Canvas *canvas;
+    AnimatedObject *obj;
+} ThreadArg;
+
+/* ——————————————————————— Dibujar con mutex ——————————————————————— */
+void draw_shape_on_canvas(Canvas *canvas, Shape *shape, int pos_x, int pos_y)
+{
+    my_mutex_lock(&canvas_mutex);               // ⇦ sección crítica
+
+    char matrix[canvas->height][canvas->width + 1];
+    for (int i = 0; i < canvas->height; i++) {
+        memset(matrix[i], ' ', canvas->width);
+        matrix[i][canvas->width] = '\0';
+    }
+
+    for (int i = 0; i < shape->num_lines; i++) {
+        int cy = pos_y + i;
+        if (cy >= canvas->height) break;
+        for (int j = 0; j < (int)strlen(shape->lines[i]); j++) {
+            int cx = pos_x + j;
+            if (cx >= canvas->width) break;
+            char ch = shape->lines[i][j];
+            if (ch != ' ') matrix[cy][cx] = ch;
+        }
+    }
+
+    printf("\033[2J\033[H");                    // clear screen
+    for (int i = 0; i < canvas->height; i++)
+        printf("%s\n", matrix[i]);
+
+    my_mutex_unlock(&canvas_mutex);             // ⇨ fin crítica
+}
+
+/* —————————— Anima un objeto, cediendo CPU en cada frame —————————— */
+void simulate_animation(Canvas *canvas, Shape *shape, AnimatedObject *obj)
+{
+    int steps = obj->end_x - obj->start_x;
+    if (steps == 0) steps = 1;
+
+    for (int step = 0; step <= steps; step++) {
+        int x = obj->start_x + step;
+        draw_shape_on_canvas(canvas, shape, x, obj->start_y);
+        usleep(200000);                         // 0.2 s por frame
+        my_thread_yield();                      // 👈 ceder CPU
+    }
+}
+
+/* ———————————————— Función de hilo por objeto ———————————————— */
+void animar_objeto(void *arg)
+{
+    ThreadArg *ta = (ThreadArg*)arg;
+    Shape shape;
+    FILE *sf = fopen(ta->obj->shape_path, "r");
+    if (!sf) { perror("shape"); my_thread_end(); return; }
+
+    shape.num_lines = 0;
+    while (fgets(shape.lines[shape.num_lines], MAX_LINE_LENGTH, sf)) {
+        shape.lines[shape.num_lines]
+            [strcspn(shape.lines[shape.num_lines], "\n")] = '\0';
+        if (++shape.num_lines >= MAX_SHAPE_LINES) break;
+    }
+    fclose(sf);
+
+    simulate_animation(ta->canvas, &shape, ta->obj);
+    my_thread_end();
+}
+
+/* ————————————————————————  MAIN  ———————————————————————— */
+int main(void)
+{
+    FILE *f = fopen("config/animation.ini", "r");
+    if (!f) { perror("ini"); return 1; }
+
+    Canvas canvas = {40, 15};
+    AnimatedObject obj[MAX_OBJECTS];
+    ThreadArg args[MAX_OBJECTS];
+    my_thread_t *tid[MAX_OBJECTS];
+    int n = 0;
+    char line[256];
+
+    /* ——— parse muy simple: solo [objectX] ——— */
+    while (fgets(line, sizeof line, f) && n < MAX_OBJECTS) {
+        if (strncmp(line, "[object", 7) == 0) {
+            AnimatedObject *o = &obj[n++];
+            while (fgets(line, sizeof line, f) && line[0] != '[') {
+                sscanf(line, "name=%s",            o->name);
+                sscanf(line, "scheduler=%s",       o->scheduler_type);
+                sscanf(line, "shape=%s",           o->shape_path);
+                sscanf(line, "start_x=%d",         &o->start_x);
+                sscanf(line, "start_y=%d",         &o->start_y);
+                sscanf(line, "end_x=%d",           &o->end_x);
+                sscanf(line, "end_y=%d",           &o->end_y);
+            }
+        }
+    }
+    fclose(f);
+
+    my_thread_register_main();
+    my_mutex_init(&canvas_mutex);
+
+    /* ——— crear un hilo por objeto ——— */
+    for (int i = 0; i < n; i++) {
+        args[i].canvas = &canvas;
+        args[i].obj    = &obj[i];
+
+        scheduler_type s = SCHED_RR;
+        if (strcmp(obj[i].scheduler_type, "LOTTERY") == 0)  s = SCHED_LOTTERY;
+        if (strcmp(obj[i].scheduler_type, "REALTIME") == 0) s = SCHED_REALTIME;
+
+        my_thread_create(&tid[i], s, animar_objeto, &args[i]);
+
+        if (s == SCHED_LOTTERY)  tid[i]->tickets  = 5;
+        if (s == SCHED_REALTIME) tid[i]->deadline = 10;
+    }
+
+    /* ——— bucle principal para dejar correr los hilos ——— */
+    for (;;) {
+        int done = 1;
+        for (int i = 0; i < n; i++)
+            if (!tid[i]->finished) done = 0;
+        if (done) break;
+        my_thread_yield();
+    }
+
+    my_mutex_destroy(&canvas_mutex);
+    puts("\n✅ Animación terminada.");
+    return 0;
+}
