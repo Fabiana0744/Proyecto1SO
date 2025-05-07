@@ -5,6 +5,7 @@
 #include <ncurses.h>
 #include "../include/anim.h"
 #include "../include/mypthreads.h"
+#include <sys/time.h>
 
 #define MAX_OBJECTS 10
 
@@ -136,6 +137,13 @@ int all_finished() {
 }
 
 int main() {
+    
+    extern long program_start_time;
+
+    struct timeval start;
+    gettimeofday(&start, NULL);
+    program_start_time = start.tv_sec * 1000L + start.tv_usec / 1000L;
+
     if (parse_ini("config/animation.ini", &canvas, objects, &obj_count) != 0) {
         fprintf(stderr, "Error al cargar .ini\n");
         return 1;
@@ -155,6 +163,9 @@ int main() {
         objects[i].thread = t;
         t->tickets = objects[i].tickets;
         t->deadline = objects[i].deadline;
+
+        t->time_start = objects[i].time_start;
+        t->time_end = objects[i].time_end;
     }
 
     while (!all_finished()) {

@@ -21,6 +21,8 @@ typedef struct my_thread {
     scheduler_type sched;
     int tickets;        // para sorteo
     int deadline;       // para tiempo real
+    long time_start;
+    long time_end;
     struct my_thread *next;
 
     bool detached;                 // Para saber si está separado
@@ -34,13 +36,15 @@ typedef struct my_mutex {
     int owner;                      // ID del hilo que lo tiene
 } my_mutex_t;
 
+long get_current_time_ms();
+extern long program_start_time;
+
 void my_thread_register_main();
 void my_thread_start(my_thread_t *thread);
 
 // Acceso a current_thread (para schedulers)
 my_thread_t* get_current_thread();
 void set_current_thread(my_thread_t *thread);
-
 
 // Declaraciones principales
 int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_routine)(void *), void *arg);

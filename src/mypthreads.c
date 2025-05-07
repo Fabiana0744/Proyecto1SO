@@ -3,6 +3,20 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <sys/time.h>
+
+// Tiempo en que inició el programa (ms desde epoch)
+long program_start_time = 0;
+
+// Devuelve milisegundos desde que inició el programa
+long get_current_time_ms() {
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    return (now.tv_sec * 1000L + now.tv_usec / 1000L) - program_start_time;
+}
+
+
+
 static int thread_counter = 0;
 static my_thread_t *current_thread = NULL;
 
