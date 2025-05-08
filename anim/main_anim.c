@@ -2,178 +2,211 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include <ncurses.h>
-#include "../include/anim.h"
-#include "../include/mypthreads.h"
 #include <sys/time.h>
 
-#define MAX_OBJECTS 10
+#include "../include/anim.h"
+#include "../include/mypthreads.h"
 
-Canvas canvas;
-AnimatedObject objects[MAX_OBJECTS];
-int obj_count = 0;
+/* --------------------------------------------------
+ * Parámetros globales
+ * --------------------------------------------------*/
+#define MAX_OBJECTS   10
+#define MAX_CANVAS    120          /* límite para buffer+mapa */
+#define BASE_STEP_US  100000       /* 100 ms entre cuadros */
 
-char canvas_buffer[100][100];  // Buffer para el canvas
-my_mutex_t draw_mutex;
+Canvas          canvas;
+AnimatedObject  objects[MAX_OBJECTS];
+int             obj_count = 0;
 
-// Cargar figura ASCII
-void load_shape(const char *path, Shape *shape) {
+char canvas_buffer[MAX_CANVAS][MAX_CANVAS];   /* buffer ASCII visible   */
+int  occ_map[MAX_CANVAS][MAX_CANVAS];         /* -1 libre | ≥0 id hilo */
+
+my_mutex_t draw_mutex;                        /* protege buffer+mapa    */
+
+/* --------------------------------------------------
+ * Utilidades de dibujo y ocupación
+ * --------------------------------------------------*/
+static void load_shape(const char *path, Shape *s)
+{
     FILE *f = fopen(path, "r");
-    if (!f) {
-        perror("No se pudo abrir shape");
-        exit(1);
-    }
-
-    shape->num_lines = 0;
-    while (fgets(shape->lines[shape->num_lines], MAX_LINE_LENGTH, f)) {
-        shape->lines[shape->num_lines][strcspn(shape->lines[shape->num_lines], "\n")] = '\0';
-        shape->num_lines++;
-        if (shape->num_lines >= MAX_SHAPE_LINES) break;
+    if (!f) { perror("shape"); exit(EXIT_FAILURE); }
+    s->num_lines = 0;
+    while (fgets(s->lines[s->num_lines], MAX_LINE_LENGTH, f)) {
+        s->lines[s->num_lines][strcspn(s->lines[s->num_lines], "\n")] = '\0';
+        if (++s->num_lines >= MAX_SHAPE_LINES) break;
     }
     fclose(f);
 }
 
-void draw_canvas_frame() {
-    int x0 = 0, y0 = 0;
-    int x1 = canvas.width + 1;
+static void draw_frame(void)
+{
+    int x1 = canvas.width  + 1;
     int y1 = canvas.height + 1;
-
-    for (int x = x0; x <= x1; x++) {
-        mvaddch(y0, x, '-');
-        mvaddch(y1, x, '-');
-    }
-    for (int y = y0; y <= y1; y++) {
-        mvaddch(y, x0, '|');
-        mvaddch(y, x1, '|');
-    }
-    mvaddch(y0, x0, '+');
-    mvaddch(y0, x1, '+');
-    mvaddch(y1, x0, '+');
-    mvaddch(y1, x1, '+');
+    for (int x = 0; x <= x1; x++) { mvaddch(0,  x,  '-'); mvaddch(y1, x, '-'); }
+    for (int y = 0; y <= y1; y++) { mvaddch(y, 0, '|');  mvaddch(y,  x1, '|'); }
+    mvaddch(0, 0, '+'); mvaddch(0, x1, '+'); mvaddch(y1, 0, '+'); mvaddch(y1, x1, '+');
 }
 
-void erase_shape_from_buffer(Shape *shape, int x, int y) {
-    for (int i = 0; i < shape->num_lines; i++) {
-        for (int j = 0; j < strlen(shape->lines[i]); j++) {
-            int cx = x + j;
-            int cy = y + i;
-            if (cx >= 0 && cy >= 0 && cx < canvas.width && cy < canvas.height) {
+static void buffer_clear_shape(Shape *s, int x, int y)
+{
+    for (int i = 0; i < s->num_lines; i++)
+        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
+            int cx = x + j, cy = y + i;
+            if (cx>=0 && cy>=0 && cx<canvas.width && cy<canvas.height)
                 canvas_buffer[cy][cx] = ' ';
-            }
         }
-    }
+}
+static void buffer_draw_shape(Shape *s, int x, int y)
+{
+    for (int i = 0; i < s->num_lines; i++)
+        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
+            int cx = x + j, cy = y + i;
+            if (cx>=0 && cy>=0 && cx<canvas.width && cy<canvas.height)
+                canvas_buffer[cy][cx] = s->lines[i][j];
+        }
 }
 
-void draw_shape_in_buffer(Shape *shape, int x, int y) {
-    for (int i = 0; i < shape->num_lines; i++) {
-        for (int j = 0; j < strlen(shape->lines[i]); j++) {
-            int cx = x + j;
-            int cy = y + i;
-            if (cx >= 0 && cy >= 0 && cx < canvas.width && cy < canvas.height) {
-                canvas_buffer[cy][cx] = shape->lines[i][j];
-            }
+static void mark_region(Shape *s, int x, int y, int id, int occupy)
+{
+    for (int i = 0; i < s->num_lines; i++)
+        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
+            int cx = x + j, cy = y + i;
+            if (cx>=0 && cy>=0 && cx<canvas.width && cy<canvas.height)
+                occ_map[cy][cx] = occupy ? id : -1;
         }
-    }
 }
 
-void render_canvas() {
+static int region_free(Shape *s, int x, int y, int self_id)
+{
+    for (int i = 0; i < s->num_lines; i++)
+        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
+            int cx = x + j, cy = y + i;
+            if (cx<0 || cy<0 || cx>=canvas.width || cy>=canvas.height)
+                continue; /* fuera del canvas -> la ignoramos */
+            int occ = occ_map[cy][cx];
+            if (occ != -1 && occ != self_id) return 0;
+        }
+    return 1;
+}
+
+static void render(void)
+{
     clear();
-    draw_canvas_frame();
-    for (int y = 0; y < canvas.height; y++) {
-        for (int x = 0; x < canvas.width; x++) {
-            mvaddch(y + 1, x + 1, canvas_buffer[y][x]);
-        }
-    }
+    draw_frame();
+    for (int y = 0; y < canvas.height; y++)
+        for (int x = 0; x < canvas.width; x++)
+            mvaddch(y+1, x+1, canvas_buffer[y][x]);
     refresh();
 }
 
-void animate(void *arg) {
-    AnimatedObject *obj = (AnimatedObject *)arg;
-    Shape shape;
-    load_shape(obj->shape_path, &shape);
+/* --------------------------------------------------
+ * Hilo de animación
+ * --------------------------------------------------*/
+static void animate(void *arg)
+{
+    AnimatedObject *obj = (AnimatedObject*)arg;
+    Shape shape; load_shape(obj->shape_path, &shape);
 
     int dx_total = abs(obj->end_x - obj->start_x);
     int dy_total = abs(obj->end_y - obj->start_y);
-    int steps = dx_total > dy_total ? dx_total : dy_total;
-    if (steps == 0) steps = 1;
-
+    int steps    = dx_total > dy_total ? dx_total : dy_total;
+    if (!steps) steps = 1;
     float dx = (float)(obj->end_x - obj->start_x) / steps;
     float dy = (float)(obj->end_y - obj->start_y) / steps;
 
-    float current_x = obj->start_x;
-    float current_y = obj->start_y;
-
-    int prev_x = (int)current_x;
-    int prev_y = (int)current_y;
+    int cur_x = obj->start_x;
+    int cur_y = obj->start_y;
 
     my_thread_t *self = get_current_thread();
 
-    if (self->must_cleanup) {
-        my_mutex_lock(&draw_mutex);
-        erase_shape_from_buffer(&shape, prev_x, prev_y);
-        render_canvas();
-        my_mutex_unlock(&draw_mutex);
-
-        self->must_cleanup = false;
-        my_thread_end();
-    }
-
     for (int i = 0; i <= steps; i++) {
-        if (self->finished) {
-            break;
+        if (self->finished) break;
+
+        int next_x = obj->start_x + (int)(i * dx);
+        int next_y = obj->start_y + (int)(i * dy);
+
+        int moved = 0;
+        while (!moved) {
+            my_mutex_lock(&draw_mutex);
+
+            /* 1) Liberar región actual para evitar hold‑and‑wait */
+            mark_region(&shape, cur_x, cur_y, self->id, 0);
+            buffer_clear_shape(&shape, cur_x, cur_y);
+
+            /* 2) Si la nueva región está libre, ocupamos y dibujamos */
+            if (region_free(&shape, next_x, next_y, self->id)) {
+                mark_region(&shape, next_x, next_y, self->id, 1);
+                buffer_draw_shape(&shape, next_x, next_y);
+                render();
+                my_mutex_unlock(&draw_mutex);
+                cur_x = next_x; cur_y = next_y;
+                moved = 1; /* salir del while */
+            } else {
+                /* 3) No se pudo mover → restaurar posición vieja y reintentar */
+                mark_region(&shape, cur_x, cur_y, self->id, 1);
+                buffer_draw_shape(&shape, cur_x, cur_y);
+                render();
+                my_mutex_unlock(&draw_mutex);
+                usleep(40000);
+                my_thread_yield();
+            }
         }
 
-        int x = (int)(obj->start_x + i * dx);
-        int y = (int)(obj->start_y + i * dy);
-
-        my_mutex_lock(&draw_mutex);
-        erase_shape_from_buffer(&shape, prev_x, prev_y);
-        draw_shape_in_buffer(&shape, x, y);
-        render_canvas();
-        my_mutex_unlock(&draw_mutex);
-
-        prev_x = x;
-        prev_y = y;
-
-        usleep(100000);
+        usleep(BASE_STEP_US);
         my_thread_yield();
     }
 
+    /* limpieza final */
     my_mutex_lock(&draw_mutex);
-    erase_shape_from_buffer(&shape, prev_x, prev_y);
-    render_canvas();
+    mark_region(&shape, cur_x, cur_y, self->id, 0);
+    buffer_clear_shape(&shape, cur_x, cur_y);
+    render();
     my_mutex_unlock(&draw_mutex);
 
     my_thread_end();
 }
 
 
-
-int all_finished() {
-    for (int i = 0; i < obj_count; i++) {
+/* --------------------------------------------------
+ * Comprobación de finalización global
+ * --------------------------------------------------*/
+static int all_done(void)
+{
+    for (int i = 0; i < obj_count; i++)
         if (!objects[i].thread || !objects[i].thread->finished)
             return 0;
-    }
     return 1;
 }
 
-int main() {
-    
+/* --------------------------------------------------
+ * main
+ * --------------------------------------------------*/
+int main(void)
+{
     extern long program_start_time;
+    struct timeval tv; gettimeofday(&tv, NULL);
+    program_start_time = tv.tv_sec * 1000L + tv.tv_usec / 1000L;
 
-    struct timeval start;
-    gettimeofday(&start, NULL);
-    program_start_time = start.tv_sec * 1000L + start.tv_usec / 1000L;
+    srand(time(NULL));
 
-    if (parse_ini("config/animation.ini", &canvas, objects, &obj_count) != 0) {
+    if (parse_ini("config/animation.ini", &canvas, objects, &obj_count)) {
         fprintf(stderr, "Error al cargar .ini\n");
-        return 1;
+        return EXIT_FAILURE;
+    }
+
+    if (canvas.width >= MAX_CANVAS || canvas.height >= MAX_CANVAS) {
+        fprintf(stderr, "Canvas demasiado grande (max %dx%d)\n", MAX_CANVAS, MAX_CANVAS);
+        return EXIT_FAILURE;
     }
 
     memset(canvas_buffer, ' ', sizeof(canvas_buffer));
-    initscr();
-    noecho();
-    curs_set(0);
+    for (int y = 0; y < MAX_CANVAS; y++)
+        for (int x = 0; x < MAX_CANVAS; x++)
+            occ_map[y][x] = -1;
+
+    initscr(); noecho(); curs_set(0);
 
     my_mutex_init(&draw_mutex);
     my_thread_register_main();
@@ -182,18 +215,17 @@ int main() {
         my_thread_t *t;
         my_thread_create(&t, objects[i].sched, animate, &objects[i]);
         objects[i].thread = t;
-        t->tickets = objects[i].tickets;
-        t->deadline = objects[i].deadline;
-
+        t->tickets    = objects[i].tickets;
+        t->deadline   = objects[i].deadline;
         t->time_start = objects[i].time_start;
-        t->time_end = objects[i].time_end;
+        t->time_end   = objects[i].time_end;
     }
 
-    while (!all_finished()) {
+    while (!all_done()) {
         my_thread_yield();
         usleep(10000);
     }
 
     endwin();
-    return 0;
+    return EXIT_SUCCESS;
 }
