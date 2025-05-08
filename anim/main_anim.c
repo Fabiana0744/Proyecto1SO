@@ -92,11 +92,10 @@ void animate(void *arg) {
     Shape shape;
     load_shape(obj->shape_path, &shape);
 
-    // Calculamos el máximo desplazamiento para determinar pasos
     int dx_total = abs(obj->end_x - obj->start_x);
     int dy_total = abs(obj->end_y - obj->start_y);
     int steps = dx_total > dy_total ? dx_total : dy_total;
-    if (steps == 0) steps = 1;  // prevenir división por 0
+    if (steps == 0) steps = 1;
 
     float dx = (float)(obj->end_x - obj->start_x) / steps;
     float dy = (float)(obj->end_y - obj->start_y) / steps;
@@ -107,7 +106,23 @@ void animate(void *arg) {
     int prev_x = (int)current_x;
     int prev_y = (int)current_y;
 
+    my_thread_t *self = get_current_thread();
+
+    if (self->must_cleanup) {
+        my_mutex_lock(&draw_mutex);
+        erase_shape_from_buffer(&shape, prev_x, prev_y);
+        render_canvas();
+        my_mutex_unlock(&draw_mutex);
+
+        self->must_cleanup = false;
+        my_thread_end();
+    }
+
     for (int i = 0; i <= steps; i++) {
+        if (self->finished) {
+            break;
+        }
+
         int x = (int)(obj->start_x + i * dx);
         int y = (int)(obj->start_y + i * dy);
 
@@ -120,12 +135,18 @@ void animate(void *arg) {
         prev_x = x;
         prev_y = y;
 
-        usleep(100000); // 0.1 seg
+        usleep(100000);
         my_thread_yield();
     }
 
+    my_mutex_lock(&draw_mutex);
+    erase_shape_from_buffer(&shape, prev_x, prev_y);
+    render_canvas();
+    my_mutex_unlock(&draw_mutex);
+
     my_thread_end();
 }
+
 
 
 int all_finished() {

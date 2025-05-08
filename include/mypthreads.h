@@ -17,6 +17,7 @@ typedef struct my_thread {
     ucontext_t context;
     void *stack;
     bool finished;
+    bool must_cleanup;    
     struct my_thread *waiting_for_me;
     scheduler_type sched;
     int tickets;        // para sorteo

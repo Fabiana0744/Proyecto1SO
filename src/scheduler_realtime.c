@@ -33,11 +33,16 @@ my_thread_t* scheduler_next_realtime() {
         long end_ms   = curr->time_end   * 1000;
 
         if (now > end_ms) {
-            curr->finished = true;
-            printf("\n💥 Hilo explotó (now=%ld > end=%ld)\n", now, end_ms);
+            if (!curr->finished) {
+                curr->finished = true;
+                curr->must_cleanup = true;
+                printf("\n💥 Hilo explotó (now=%ld > end=%ld)\n", now, end_ms);
+                return curr;  // le damos chance de limpiar
+            }
             curr = curr->next;
             continue;
         }
+        
 
         if (now >= start_ms) {
             if (curr->deadline < best_deadline) {
