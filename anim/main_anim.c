@@ -78,18 +78,6 @@ static void mark_region(Shape *s, int x, int y, int id, int occupy)
         }
 }
 
-static int region_free(Shape *s, int x, int y, int self_id)
-{
-    for (int i = 0; i < s->num_lines; i++)
-        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
-            int cx = x + j, cy = y + i;
-            if (cx<0 || cy<0 || cx>=canvas.width || cy>=canvas.height)
-                continue; /* fuera del canvas -> la ignoramos */
-            int occ = occ_map[cy][cx];
-            if (occ != -1 && occ != self_id) return 0;
-        }
-    return 1;
-}
 
 static void render(void)
 {
@@ -100,6 +88,21 @@ static void render(void)
             mvaddch(y+1, x+1, canvas_buffer[y][x]);
     refresh();
 }
+
+
+static int region_blocker(Shape *s, int x, int y, int self_id)
+{
+    for (int i = 0; i < s->num_lines; i++)
+        for (int j = 0; j < (int)strlen(s->lines[i]); j++) {
+            int cx = x + j, cy = y + i;
+            if (cx < 0 || cy < 0 || cx >= canvas.width || cy >= canvas.height)
+                continue;
+            int occ = occ_map[cy][cx];
+            if (occ != -1 && occ != self_id) return occ;
+        }
+    return -1; // libre o solo yo
+}
+
 
 /* --------------------------------------------------
  * Hilo de animación
@@ -130,22 +133,25 @@ static void animate(void *arg)
         int moved = 0;
         while (!moved) {
             my_mutex_lock(&draw_mutex);
-
-            /* 1) Liberar región actual para evitar hold‑and‑wait */
-            mark_region(&shape, cur_x, cur_y, self->id, 0);
-            buffer_clear_shape(&shape, cur_x, cur_y);
-
-            /* 2) Si la nueva región está libre, ocupamos y dibujamos */
-            if (region_free(&shape, next_x, next_y, self->id)) {
+        
+            int blocker = region_blocker(&shape, next_x, next_y, self->id);
+        
+            if (blocker == -1 || blocker > self->id) {
+                // Podemos movernos
+                mark_region(&shape, cur_x, cur_y, self->id, 0);
+                buffer_clear_shape(&shape, cur_x, cur_y);
+        
                 mark_region(&shape, next_x, next_y, self->id, 1);
                 buffer_draw_shape(&shape, next_x, next_y);
                 render();
                 my_mutex_unlock(&draw_mutex);
-                cur_x = next_x; cur_y = next_y;
-                moved = 1; /* salir del while */
+        
+                cur_x = next_x;
+                cur_y = next_y;
+                moved = 1;
             } else {
-                /* 3) No se pudo mover → restaurar posición vieja y reintentar */
-                mark_region(&shape, cur_x, cur_y, self->id, 1);
+                // Nos toca esperar
+                mark_region(&shape, cur_x, cur_y, self->id, 1); // aseguramos que seguimos ocupando
                 buffer_draw_shape(&shape, cur_x, cur_y);
                 render();
                 my_mutex_unlock(&draw_mutex);
@@ -153,6 +159,7 @@ static void animate(void *arg)
                 my_thread_yield();
             }
         }
+        
 
         usleep(BASE_STEP_US);
         my_thread_yield();
