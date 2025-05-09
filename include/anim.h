@@ -6,6 +6,9 @@
 #define MAX_SHAPE_LINES 20
 #define MAX_LINE_LENGTH 100
 
+#define MAX_MONITORS 10
+
+
 typedef struct {
     char lines[MAX_SHAPE_LINES][MAX_LINE_LENGTH];
     int num_lines;
@@ -31,7 +34,8 @@ typedef struct {
     int end_x, end_y;
     int time_start;
     int time_end;
-    int rotation;
+    int rotation_start;
+    int rotation_end;
     int tickets;
     int deadline;                // Para SCHED_REALTIME
 

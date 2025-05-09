@@ -61,8 +61,10 @@ static int handler(void *user, const char *section, const char *name, const char
             o->time_start = atoi(value);
         else if (strcmp(name, "time_end") == 0)
             o->time_end = atoi(value);
-        else if (strcmp(name, "rotation") == 0)
-            o->rotation = atoi(value);
+        else if (strcmp(name, "rotation_start") == 0)
+            o->rotation_start = atoi(value);
+        else if (strcmp(name, "rotation_end") == 0)
+            o->rotation_end = atoi(value);
         else if (strcmp(name, "tickets") == 0)
             o->tickets = atoi(value);
         else if (strcmp(name, "deadline") == 0)

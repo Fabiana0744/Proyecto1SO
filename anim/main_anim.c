@@ -183,59 +183,80 @@ void rotate_shape(Shape *s, int angle) {
 
 
 
-/* --------------------------------------------------
- * Hilo de animación
- * --------------------------------------------------*/
 static void animate(void *arg)
 {
     AnimatedObject *obj = (AnimatedObject*)arg;
-    Shape shape; load_shape(obj->shape_path, &shape);
+    Shape shape, prev_shape;
+    load_shape(obj->shape_path, &shape);
 
+    my_thread_t *self = get_current_thread();
 
-    if (obj->rotation != 0)
-    rotate_shape(&shape, obj->rotation);
+    // --- Rotación progresiva ---
+    int angle_start = obj->rotation_start % 360;
+    int angle_end   = obj->rotation_end   % 360;
+    int total_rotation = (angle_end - angle_start + 360) % 360;
+    int num_rotations  = total_rotation / 90;
+    int current_rotation = angle_start;
 
+    if (current_rotation > 0)
+        rotate_shape(&shape, current_rotation);
 
+    // Movimiento base
     int dx_total = abs(obj->end_x - obj->start_x);
     int dy_total = abs(obj->end_y - obj->start_y);
     int steps    = dx_total > dy_total ? dx_total : dy_total;
-    if (!steps) steps = 1;
+    if (steps == 0) steps = 1;
+
     float dx = (float)(obj->end_x - obj->start_x) / steps;
     float dy = (float)(obj->end_y - obj->start_y) / steps;
 
     int cur_x = obj->start_x;
     int cur_y = obj->start_y;
 
-    my_thread_t *self = get_current_thread();
+    int steps_per_rotation = (num_rotations > 0) ? steps / num_rotations : steps + 1;
+    int rotations_applied = 0;
 
-    for (int i = 0; i <= steps; i++) {
+    // --- Dibujo inicial ---
+    my_mutex_lock(&draw_mutex);
+    mark_region(&shape, cur_x, cur_y, self->id, 1);
+    buffer_draw_shape(&shape, cur_x, cur_y);
+    render();
+    my_mutex_unlock(&draw_mutex);
+
+    for (int i = 1; i <= steps; i++) {
         if (self->finished) break;
+
+        memcpy(&prev_shape, &shape, sizeof(Shape));  // ← Siempre antes de rotar o moverse
 
         int next_x = obj->start_x + (int)(i * dx);
         int next_y = obj->start_y + (int)(i * dy);
 
-        int moved = 0;
-        while (!moved) {
+        // --- Rotar progresivamente si toca ---
+        if (num_rotations > 0 && i % steps_per_rotation == 0 && rotations_applied < num_rotations) {
+            rotate_shape(&shape, 90);
+            rotations_applied++;
+            current_rotation = (current_rotation + 90) % 360;
+        }
+
+        while (1) {
             my_mutex_lock(&draw_mutex);
-        
+
             int blocker = region_blocker(&shape, next_x, next_y, self->id);
-        
+
             if (blocker == -1 || blocker > self->id) {
-                // Podemos movernos
-                mark_region(&shape, cur_x, cur_y, self->id, 0);
-                buffer_clear_shape(&shape, cur_x, cur_y);
-        
+                mark_region(&prev_shape, cur_x, cur_y, self->id, 0);
+                buffer_clear_shape(&prev_shape, cur_x, cur_y);
+
                 mark_region(&shape, next_x, next_y, self->id, 1);
                 buffer_draw_shape(&shape, next_x, next_y);
                 render();
                 my_mutex_unlock(&draw_mutex);
-        
+
                 cur_x = next_x;
                 cur_y = next_y;
-                moved = 1;
+                break;
             } else {
-                // Nos toca esperar
-                mark_region(&shape, cur_x, cur_y, self->id, 1); // aseguramos que seguimos ocupando
+                mark_region(&shape, cur_x, cur_y, self->id, 1);
                 buffer_draw_shape(&shape, cur_x, cur_y);
                 render();
                 my_mutex_unlock(&draw_mutex);
@@ -243,13 +264,12 @@ static void animate(void *arg)
                 my_thread_yield();
             }
         }
-        
 
         usleep(BASE_STEP_US);
         my_thread_yield();
     }
 
-    /* limpieza final */
+    // Limpieza final
     my_mutex_lock(&draw_mutex);
     mark_region(&shape, cur_x, cur_y, self->id, 0);
     buffer_clear_shape(&shape, cur_x, cur_y);
@@ -258,6 +278,8 @@ static void animate(void *arg)
 
     my_thread_end();
 }
+
+
 
 
 /* --------------------------------------------------
