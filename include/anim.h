@@ -31,8 +31,7 @@ typedef struct {
     int end_x, end_y;
     int time_start;
     int time_end;
-    int rotation_start;
-    int rotation_end;
+    int rotation;
     int tickets;
     int deadline;                // Para SCHED_REALTIME
 

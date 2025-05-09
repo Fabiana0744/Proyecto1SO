@@ -9,6 +9,9 @@
 #include "../include/anim.h"
 #include "../include/mypthreads.h"
 
+FILE *log_file = NULL;
+
+
 /* --------------------------------------------------
  * Parámetros globales
  * --------------------------------------------------*/
@@ -104,6 +107,105 @@ static int region_blocker(Shape *s, int x, int y, int self_id)
 }
 
 
+void shape_to_matrix(Shape *s, char matrix[MAX_SHAPE_LINES][MAX_LINE_LENGTH], int *rows, int *cols) {
+    *rows = s->num_lines;
+    *cols = 0;
+    for (int i = 0; i < *rows; i++) {
+        int len = strlen(s->lines[i]);
+        if (len > *cols) *cols = len;
+    }
+
+    // Rellenar con espacios para que todas las filas tengan igual longitud
+    for (int i = 0; i < *rows; i++) {
+        for (int j = 0; j < *cols; j++) {
+            if (j < (int)strlen(s->lines[i]))
+                matrix[i][j] = s->lines[i][j];
+            else
+                matrix[i][j] = ' ';
+        }
+    }
+}
+
+void rotate_matrix(char src[MAX_SHAPE_LINES][MAX_LINE_LENGTH],
+    char dst[MAX_SHAPE_LINES][MAX_LINE_LENGTH],
+    int rows, int cols, int angle) {
+
+    switch (angle) {
+    case 90:
+        for (int i = 0; i < rows; i++)
+            for (int j = 0; j < cols; j++)
+                dst[j][rows - 1 - i] = src[i][j];
+        break;
+
+    case 180:
+        for (int i = 0; i < rows; i++)
+            for (int j = 0; j < cols; j++)
+                dst[rows - 1 - i][cols - 1 - j] = src[i][j];
+        break;
+
+    case 270:
+        for (int i = 0; i < rows; i++)
+            for (int j = 0; j < cols; j++)
+                dst[cols - 1 - j][i] = src[i][j];
+        break;
+
+    default:
+        for (int i = 0; i < rows; i++)
+            for (int j = 0; j < cols; j++)
+                dst[i][j] = src[i][j];
+    }
+}
+
+
+void matrix_to_shape(char matrix[MAX_SHAPE_LINES][MAX_LINE_LENGTH], Shape *s, int rows, int cols) {
+    s->num_lines = rows;
+    for (int i = 0; i < rows; i++) {
+        memcpy(s->lines[i], matrix[i], cols);
+        s->lines[i][cols] = '\0';  // terminador nulo
+    }
+}
+
+void print_matrix_to_log(char matrix[MAX_SHAPE_LINES][MAX_LINE_LENGTH], int rows, int cols, const char *label) {
+    if (!log_file) return;
+
+    fprintf(log_file, "▶ %s (%dx%d):\n", label, rows, cols);
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            fputc(matrix[i][j], log_file);
+        }
+        fputc('\n', log_file);
+    }
+    fprintf(log_file, "────────────────────────────\n");
+}
+
+
+
+void rotate_shape(Shape *s, int angle) {
+    char src[MAX_SHAPE_LINES][MAX_LINE_LENGTH];
+    char dst[MAX_SHAPE_LINES][MAX_LINE_LENGTH];
+    int rows, cols;
+
+    shape_to_matrix(s, src, &rows, &cols);
+    char label[64];
+    snprintf(label, sizeof(label), "Figura original");
+    print_matrix_to_log(src, rows, cols, label);
+
+    rotate_matrix(src, dst, rows, cols, angle);
+    snprintf(label, sizeof(label), "Figura rotada %d°", angle);
+    if (angle == 90 || angle == 270)
+        print_matrix_to_log(dst, cols, rows, label);
+    else
+        print_matrix_to_log(dst, rows, cols, label);
+
+    int new_rows = (angle == 90 || angle == 270) ? cols : rows;
+    int new_cols = (angle == 90 || angle == 270) ? rows : cols;
+
+    matrix_to_shape(dst, s, new_rows, new_cols);
+}
+
+
+
+
 /* --------------------------------------------------
  * Hilo de animación
  * --------------------------------------------------*/
@@ -111,6 +213,11 @@ static void animate(void *arg)
 {
     AnimatedObject *obj = (AnimatedObject*)arg;
     Shape shape; load_shape(obj->shape_path, &shape);
+
+
+    if (obj->rotation != 0)
+    rotate_shape(&shape, obj->rotation);
+
 
     int dx_total = abs(obj->end_x - obj->start_x);
     int dy_total = abs(obj->end_y - obj->start_y);
@@ -192,6 +299,12 @@ static int all_done(void)
  * --------------------------------------------------*/
 int main(void)
 {
+    log_file = fopen("rotations.txt", "w");
+    if (!log_file) {
+        perror("No se pudo abrir logs/rotations.txt");
+        return EXIT_FAILURE;
+    }
+
     extern long program_start_time;
     struct timeval tv; gettimeofday(&tv, NULL);
     program_start_time = tv.tv_sec * 1000L + tv.tv_usec / 1000L;
@@ -234,5 +347,7 @@ int main(void)
     }
 
     endwin();
+    fclose(log_file);
+
     return EXIT_SUCCESS;
 }
