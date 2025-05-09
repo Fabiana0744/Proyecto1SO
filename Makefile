@@ -29,6 +29,13 @@ parser:
 main_anim:
 	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) anim/main_anim.c anim/parser.c $(INI_SRC) -o main_anim -lncurses
 
+server_anim:
+	$(CC) $(CFLAGS) $(INCLUDE) $(SRC) $(ANIM_SRC) $(INI_SRC) anim/server_anim.c -o server_anim -lncurses
+
+client_anim:
+	$(CC) $(CFLAGS) $(INCLUDE) $(ANIM_SRC) $(INI_SRC)  anim/client_anim.c -o client_anim -lncurses
+
+
 
 clean:
-	rm -f test_threads test_mutex test_lottery parser main_anim
+	rm -f test_threads test_mutex test_lottery parser main_anim server_anim client_anim

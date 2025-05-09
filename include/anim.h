@@ -8,7 +8,7 @@
 
 #define MAX_MONITORS 10
 
-
+#define MAX_CANVAS 120  // Tamaño máximo permitido del canvas
 typedef struct {
     char lines[MAX_SHAPE_LINES][MAX_LINE_LENGTH];
     int num_lines;
@@ -41,6 +41,17 @@ typedef struct {
 
     my_thread_t *thread;         // 🧵 Puntero al hilo asociado (nuevo)
 } AnimatedObject;
+
+#define NET_CANVAS_W MAX_CANVAS
+#define NET_CANVAS_H MAX_CANVAS
+
+
+typedef struct {
+    int width, height;
+    int x_offset, y_offset;
+    char content[MAX_CANVAS * MAX_CANVAS];
+} NetPacket;
+
 
 int parse_ini(const char *path, Canvas *cv, AnimatedObject objs[], int *count);
 
