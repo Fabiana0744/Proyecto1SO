@@ -165,20 +165,6 @@ void matrix_to_shape(char matrix[MAX_SHAPE_LINES][MAX_LINE_LENGTH], Shape *s, in
     }
 }
 
-void print_matrix_to_log(char matrix[MAX_SHAPE_LINES][MAX_LINE_LENGTH], int rows, int cols, const char *label) {
-    if (!log_file) return;
-
-    fprintf(log_file, "▶ %s (%dx%d):\n", label, rows, cols);
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            fputc(matrix[i][j], log_file);
-        }
-        fputc('\n', log_file);
-    }
-    fprintf(log_file, "────────────────────────────\n");
-}
-
-
 
 void rotate_shape(Shape *s, int angle) {
     char src[MAX_SHAPE_LINES][MAX_LINE_LENGTH];
@@ -186,16 +172,7 @@ void rotate_shape(Shape *s, int angle) {
     int rows, cols;
 
     shape_to_matrix(s, src, &rows, &cols);
-    char label[64];
-    snprintf(label, sizeof(label), "Figura original");
-    print_matrix_to_log(src, rows, cols, label);
-
     rotate_matrix(src, dst, rows, cols, angle);
-    snprintf(label, sizeof(label), "Figura rotada %d°", angle);
-    if (angle == 90 || angle == 270)
-        print_matrix_to_log(dst, cols, rows, label);
-    else
-        print_matrix_to_log(dst, rows, cols, label);
 
     int new_rows = (angle == 90 || angle == 270) ? cols : rows;
     int new_cols = (angle == 90 || angle == 270) ? rows : cols;
