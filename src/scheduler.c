@@ -24,7 +24,7 @@ extern void realtime_end();
 extern void realtime_run();
 
 // --- Variable global del hilo actual ---
-tcb* current_thread = NULL;
+extern tcb* current; // ✅ Correcto
 
 // --- Tipo de scheduler global actual ---
 static scheduler_type_t current_type = SCHED_RR;  // Round Robin por defecto

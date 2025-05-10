@@ -70,21 +70,25 @@ int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* a
 }
 
 int my_thread_yield(void) {
-    if (!ready_queue) return 0;
     tcb* prev = current;
-    tcb* next = dequeue();
-    enqueue(prev);
-    current = next;
-    swapcontext(&prev->context, &next->context);
+    scheduler_add(current);         // reencolar el hilo actual
+    tcb* next = scheduler_next();   // tomar siguiente hilo
+
+    if (next) {
+        current = next;
+        swapcontext(&prev->context, &next->context);
+    }
+
     return 0;
 }
+
 
 void my_thread_end(void* retval) {
     current->state = FINISHED;
     current->retval = retval;
 
     if (current->waiting_for_me) {
-        enqueue(current->waiting_for_me);
+        scheduler_add(current->waiting_for_me);
     }
 
     if (current->state == DETACHED || current->waiting_for_me == NULL) {
@@ -93,7 +97,7 @@ void my_thread_end(void* retval) {
         free(current);
     }
 
-    tcb* next = dequeue();
+    tcb* next = scheduler_next();
     if (next) {
         current = next;
         setcontext(&next->context);
@@ -101,6 +105,7 @@ void my_thread_end(void* retval) {
         setcontext(&main_context);
     }
 }
+
 
 int my_thread_join(my_thread_t thread, void** retval) {
     if (thread <= 0 || thread >= MAX_THREADS || !all_threads[thread]) return -1;
