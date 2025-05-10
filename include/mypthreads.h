@@ -2,65 +2,63 @@
 #define MYPTHREADS_H
 
 #include <ucontext.h>
+#include <stdlib.h>
 #include <stdbool.h>
 
-#define STACK_SIZE 8192
 
+
+#define STACK_SIZE 64 * 1024
 typedef enum {
-    SCHED_RR,
-    SCHED_LOTTERY,
-    SCHED_REALTIME
-} scheduler_type;
+    SCHED_RR,      // Round Robin
+    SCHED_LOTTERY, // Sorteo
+    SCHED_REALTIME // Tiempo Real
+} scheduler_type_t;
 
-typedef struct my_thread {
-    int id;
+
+typedef enum { READY, RUNNING, FINISHED, DETACHED } thread_state;
+
+typedef int my_thread_t;
+
+typedef struct my_thread_control_block {
+    my_thread_t tid;
     ucontext_t context;
-    void *stack;
-    bool finished;
-    bool must_cleanup;    
-    struct my_thread *waiting_for_me;
-    scheduler_type sched;
-    int tickets;        // para sorteo
-    int deadline;       // para tiempo real
-    long time_start;
-    long time_end;
-    struct my_thread *next;
+    thread_state state;
+    void* retval;
+    struct my_thread_control_block* waiting_for_me;
+    struct my_thread_control_block* next;
+    int tickets;  // cantidad de tickets para scheduler LOTTERY
+    long time_start;     // tiempo de inicio permitido (en segundos)
+    long time_end;       // tiempo de final permitido (en segundos)
+    long deadline;       // para EDF
+    bool must_cleanup;   // bandera para saber si debe terminar
+    bool finished;       // marca de hilo finalizado
 
-    bool detached;                 // Para saber si está separado
-    bool joined;                   // Si alguien lo está esperando
-    ucontext_t join_context;       // Contexto para volver cuando termine
+    scheduler_type_t sched_type;  // nuevo campo para saber qué tipo usa cada hilo
 
-} my_thread_t;
+} tcb;
 
-typedef struct my_mutex {
-    bool locked;                    // ya lo tiene alguien
-    int owner;                      // ID del hilo que lo tiene
+int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* arg);
+void my_thread_end(void* retval);
+int my_thread_yield(void);
+int my_thread_join(my_thread_t thread, void** retval);
+int my_thread_detach(my_thread_t thread);
+int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
+    int tickets, long time_start, long time_end, long deadline);
+
+
+
+
+// MUTEX
+typedef struct {
+    int locked;         // 0 libre, 1 ocupado
+    my_thread_t owner;  // hilo que tiene el candado
 } my_mutex_t;
 
-long get_current_time_ms();
-extern long program_start_time;
+int my_mutex_init(my_mutex_t* mutex);
+int my_mutex_lock(my_mutex_t* mutex);
+int my_mutex_trylock(my_mutex_t* mutex);
+int my_mutex_unlock(my_mutex_t* mutex);
+int my_mutex_destroy(my_mutex_t* mutex);
 
-void my_thread_register_main();
-void my_thread_start(my_thread_t *thread);
-
-// Acceso a current_thread (para schedulers)
-my_thread_t* get_current_thread();
-void set_current_thread(my_thread_t *thread);
-
-// Declaraciones principales
-int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_routine)(void *), void *arg);
-int my_thread_create_default(my_thread_t **thread, void (*start_routine)(void *), void *arg);
-void my_thread_end();
-void my_thread_yield();
-int my_thread_join(my_thread_t *thread);
-int my_thread_detach(my_thread_t *thread);
-int my_thread_chsched(my_thread_t *thread, scheduler_type sched);
-
-// Mutex
-int my_mutex_init(my_mutex_t *mutex);
-int my_mutex_lock(my_mutex_t *mutex);
-int my_mutex_trylock(my_mutex_t *mutex);
-int my_mutex_unlock(my_mutex_t *mutex);
-int my_mutex_destroy(my_mutex_t *mutex);
 
 #endif

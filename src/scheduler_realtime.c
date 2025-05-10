@@ -1,27 +1,33 @@
-#include "../include/mypthreads.h"
-#include "../include/scheduler.h"
+#include "scheduler.h"
 #include <stdio.h>
-#include <string.h>
+#include <limits.h>
 
-static my_thread_t *realtime_queue = NULL;
+static tcb* realtime_queue = NULL;
+extern ucontext_t main_context;
+extern tcb* current_thread;
 
-void scheduler_realtime_add(my_thread_t *thread) {
+extern long get_current_time_ms(); // si está en utils
+
+void realtime_init() {
+    realtime_queue = NULL;
+}
+
+void realtime_add(tcb* thread) {
     thread->next = NULL;
-
     if (!realtime_queue) {
         realtime_queue = thread;
     } else {
-        my_thread_t *temp = realtime_queue;
+        tcb* temp = realtime_queue;
         while (temp->next) temp = temp->next;
         temp->next = thread;
     }
 }
 
-my_thread_t* scheduler_next_realtime() {
+tcb* realtime_next() {
     long now = get_current_time_ms();
-    my_thread_t *curr = realtime_queue;
-    my_thread_t *best = NULL;
-    long best_deadline = __LONG_MAX__;
+    tcb* curr = realtime_queue;
+    tcb* best = NULL;
+    long best_deadline = LONG_MAX;
 
     while (curr) {
         if (curr->finished) {
@@ -36,13 +42,12 @@ my_thread_t* scheduler_next_realtime() {
             if (!curr->finished) {
                 curr->finished = true;
                 curr->must_cleanup = true;
-                printf("\n💥 Hilo explotó (now=%ld > end=%ld)\n", now, end_ms);
-                return curr;  // le damos chance de limpiar
+                printf("\n💥 Hilo %d explotó (now=%ld > end=%ld)\n", curr->tid, now, end_ms);
+                return curr;
             }
             curr = curr->next;
             continue;
         }
-        
 
         if (now >= start_ms) {
             if (curr->deadline < best_deadline) {
@@ -54,5 +59,43 @@ my_thread_t* scheduler_next_realtime() {
         curr = curr->next;
     }
 
-    return best; // Puede ser NULL si ninguno está listo
+    return best;
+}
+
+void realtime_yield() {
+    long now = get_current_time_ms();
+
+    if (current_thread && !current_thread->finished) {
+        realtime_add(current_thread);
+    }
+
+    tcb* next = realtime_next();
+    if (next) {
+        tcb* prev = current_thread;
+        current_thread = next;
+        swapcontext(&prev->context, &next->context);
+    }
+}
+
+void realtime_end() {
+    current_thread->finished = true;
+
+    tcb* next = realtime_next();
+    if (next) {
+        current_thread = next;
+        setcontext(&next->context);
+    } else {
+        printf("[REALTIME] No hay más hilos activos. Finalizando...\n");
+        setcontext(&main_context);
+    }
+}
+
+void realtime_run() {
+    tcb* next = realtime_next();
+    if (next) {
+        current_thread = next;
+        swapcontext(&main_context, &next->context);
+    } else {
+        printf("[REALTIME] Nada para ejecutar.\n");
+    }
 }

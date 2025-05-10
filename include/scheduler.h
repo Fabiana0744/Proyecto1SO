@@ -3,18 +3,30 @@
 
 #include "mypthreads.h"
 
-// Prototipos de funciones para cada scheduler
-my_thread_t* scheduler_next_thread();      // Round Robin
-my_thread_t* scheduler_next_lottery();     // Lottery
-my_thread_t* scheduler_next_realtime();    // Realtime
-void scheduler_lottery_add(my_thread_t *t);
-void scheduler_rr_add(my_thread_t *thread);
-void scheduler_realtime_add(my_thread_t *thread);
+
+// Inicialización del scheduler global
+void scheduler_init();
+
+// Añadir un hilo a la cola correspondiente
+void scheduler_add(tcb* thread);
+
+// Obtener el siguiente hilo a ejecutar
+tcb* scheduler_next();
+
+// Yield actual
+void scheduler_yield();
+
+// Finalizar el hilo actual y cambiar contexto
+void scheduler_end();
+
+// Correr el primer hilo
+void scheduler_run();
+
+// Cambiar tipo de scheduler (si se soporta en tiempo de ejecución)
+void scheduler_set_type(scheduler_type_t type);
+
+extern tcb* current_thread;
 
 
-
-
-// Función principal que decide según el tipo
-my_thread_t* my_scheduler_next();
 
 #endif

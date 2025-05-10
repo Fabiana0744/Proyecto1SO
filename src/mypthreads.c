@@ -1,226 +1,186 @@
-#include "../include/mypthreads.h"
-#include "../include/scheduler.h"
-#include <stdlib.h>
+#include "mypthreads.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
+
+#define MAX_THREADS 128
+
+static tcb* current = NULL;
+static tcb* ready_queue = NULL;
+static ucontext_t main_context;
+static int next_tid = 1;
+static tcb* all_threads[MAX_THREADS] = { NULL };
 
 #include <sys/time.h>
 
-// Tiempo en que inició el programa (ms desde epoch)
-long program_start_time = 0;
-
-// Devuelve milisegundos desde que inició el programa
 long get_current_time_ms() {
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    return (now.tv_sec * 1000L + now.tv_usec / 1000L) - program_start_time;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * 1000L) + (tv.tv_usec / 1000L);
 }
 
 
-
-static int thread_counter = 0;
-static my_thread_t *current_thread = NULL;
-
-void enqueue_thread(my_thread_t *new_thread) {
-    switch (new_thread->sched) {
-        case SCHED_RR:
-            scheduler_rr_add(new_thread);
-            break;
-        case SCHED_LOTTERY:
-            scheduler_lottery_add(new_thread);
-            break;
-        case SCHED_REALTIME:
-            scheduler_realtime_add(new_thread);
-            break;
-    }
-}
-
-my_thread_t* get_current_thread() {
-    return current_thread;
-}
-
-void set_current_thread(my_thread_t *thread) {
-    current_thread = thread;
-}
-
-// --------------- HILO PRINCIPAL ---------------------
-
-void my_thread_register_main() {
-    static my_thread_t main_thread;
-    static bool registered = false;
-
-    if (!registered) {
-        main_thread.id = -1;
-        main_thread.finished = false;
-        main_thread.detached = false;
-        main_thread.joined = false;
-        main_thread.stack = NULL;
-        main_thread.waiting_for_me = NULL;
-        main_thread.sched = SCHED_RR;
-
-        current_thread = &main_thread;
-
-        scheduler_rr_add(&main_thread);
-        registered = true;
-    }
-}
-
-// --------------- FUNCIONES PRINCIPALES DE MYPTHREADS ---------------------
-
-int my_thread_create(my_thread_t **thread, scheduler_type sched, void (*start_routine)(void *), void *arg) {
-    *thread = malloc(sizeof(my_thread_t));
-    if (!*thread) return -1;
-
-    (*thread)->id = thread_counter++;
-    (*thread)->sched = sched;
-    (*thread)->finished = false;
-    (*thread)->waiting_for_me = NULL;
-    (*thread)->detached = false;
-    (*thread)->joined = false;
-    (*thread)->tickets = 1;
-    (*thread)->deadline = 0;
-    (*thread)->next = NULL;
-
-    // Reservar espacio para la pila
-    (*thread)->stack = malloc(STACK_SIZE);
-    if (!(*thread)->stack) {
-        free(*thread);
-        return -1;
-    }
-
-    // Obtener contexto actual como base
-    if (getcontext(&(*thread)->context) == -1) {
-        perror("getcontext");
-        free((*thread)->stack);
-        free(*thread);
-        return -1;
-    }
-
-    // Configurar nuevo contexto
-    (*thread)->context.uc_link = NULL;
-    (*thread)->context.uc_stack.ss_sp = (*thread)->stack;
-    (*thread)->context.uc_stack.ss_size = STACK_SIZE;
-    (*thread)->context.uc_stack.ss_flags = 0;
-
-    makecontext(&(*thread)->context, (void (*)())start_routine, 1, arg);
-
-    enqueue_thread(*thread);  // Encolar en su scheduler
-
-    return 0;
-}
-
-void my_thread_start(my_thread_t *thread) {
-    my_thread_t *prev = current_thread;
-    current_thread = thread;
-
-    if (swapcontext(&prev->context, &thread->context) == -1) {
-        perror("swapcontext");
-    }
-}
-
-void my_thread_end() {
-    current_thread->finished = true;
-
-    if (current_thread->waiting_for_me) {
-        my_thread_t *waiting = current_thread->waiting_for_me;
-        current_thread->waiting_for_me = NULL;
-
-        current_thread = waiting;
-        setcontext(&waiting->join_context);
-        return;
-    }
-
-    my_thread_t *next = my_scheduler_next();
-    if (next && next != current_thread) {
-        set_current_thread(next);
-        setcontext(&next->context);  // salto sin volver
+static void enqueue(tcb* thread) {
+    thread->next = NULL;
+    if (!ready_queue) {
+        ready_queue = thread;
     } else {
-        exit(0);   // fin correcto si ya no queda nada
+        tcb* temp = ready_queue;
+        while (temp->next) temp = temp->next;
+        temp->next = thread;
     }
 }
 
-
-void my_thread_yield() {
-    my_thread_t *prev = get_current_thread();
-    my_thread_t *next = my_scheduler_next();
-
-    if (!next || next == prev) return;
-
-    set_current_thread(next);
-
-    if (swapcontext(&prev->context, &next->context) == -1) {
-        perror("swapcontext");
-    }
+static tcb* dequeue() {
+    if (!ready_queue) return NULL;
+    tcb* t = ready_queue;
+    ready_queue = ready_queue->next;
+    return t;
 }
 
-int my_thread_join(my_thread_t *thread) {
-    if (thread->detached || thread->joined) return -1;
+int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* arg) {
+    tcb* new_thread = malloc(sizeof(tcb));
+    if (!new_thread) return -1;
 
-    thread->joined = true;
+    getcontext(&new_thread->context);
+    new_thread->context.uc_link = 0;
+    new_thread->context.uc_stack.ss_sp = malloc(STACK_SIZE);
+    new_thread->context.uc_stack.ss_size = STACK_SIZE;
+    new_thread->context.uc_stack.ss_flags = 0;
 
-    if (thread->finished) return 0;
-
-    if (getcontext(&current_thread->join_context) == -1) {
-        perror("getcontext join");
+    if (!new_thread->context.uc_stack.ss_sp) {
+        free(new_thread);
         return -1;
     }
 
-    thread->waiting_for_me = current_thread;
+    new_thread->tid = next_tid++;
+    new_thread->state = READY;
+    new_thread->retval = NULL;
+    new_thread->waiting_for_me = NULL;
+    new_thread->next = NULL;
 
-    my_thread_yield();  // Esperar a que termine
+    *thread = new_thread->tid;
+    all_threads[new_thread->tid] = new_thread;
 
+    makecontext(&new_thread->context, (void (*)())start_routine, 1, arg);
+    enqueue(new_thread);
     return 0;
 }
 
-int my_thread_detach(my_thread_t *thread) {
-    if (thread->joined) return -1;
-    thread->detached = true;
+int my_thread_yield(void) {
+    if (!ready_queue) return 0;
+    tcb* prev = current;
+    tcb* next = dequeue();
+    enqueue(prev);
+    current = next;
+    swapcontext(&prev->context, &next->context);
     return 0;
 }
 
-int my_thread_chsched(my_thread_t *thread, scheduler_type sched) {
-    thread->sched = sched;
-    enqueue_thread(thread);  // Reagregar al nuevo scheduler
+void my_thread_end(void* retval) {
+    current->state = FINISHED;
+    current->retval = retval;
+
+    if (current->waiting_for_me) {
+        enqueue(current->waiting_for_me);
+    }
+
+    if (current->state == DETACHED || current->waiting_for_me == NULL) {
+        free(current->context.uc_stack.ss_sp);
+        all_threads[current->tid] = NULL;
+        free(current);
+    }
+
+    tcb* next = dequeue();
+    if (next) {
+        current = next;
+        setcontext(&next->context);
+    } else {
+        setcontext(&main_context);
+    }
+}
+
+int my_thread_join(my_thread_t thread, void** retval) {
+    if (thread <= 0 || thread >= MAX_THREADS || !all_threads[thread]) return -1;
+    tcb* target = all_threads[thread];
+
+    if (target->state == FINISHED) {
+        if (retval) *retval = target->retval;
+        return 0;
+    }
+
+    current->state = READY;
+    target->waiting_for_me = current;
+
+    tcb* next = dequeue();
+    if (next) {
+        current = next;
+        swapcontext(&target->waiting_for_me->context, &next->context);
+    }
+
+    if (retval) *retval = target->retval;
     return 0;
 }
 
-// --------------- MUTEX ---------------------
+int my_thread_detach(my_thread_t thread) {
+    if (thread <= 0 || thread >= MAX_THREADS || !all_threads[thread]) return -1;
+    tcb* target = all_threads[thread];
 
-int my_mutex_init(my_mutex_t *mutex) {
-    mutex->locked = false;
+    if (target->state == FINISHED) {
+        free(target->context.uc_stack.ss_sp);
+        free(target);
+        all_threads[thread] = NULL;
+        return 0;
+    }
+
+    target->state = DETACHED;
+    return 0;
+}
+
+#include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
+
+int my_mutex_init(my_mutex_t* mutex) {
+    if (!mutex) return -1;
+    mutex->locked = 0;
     mutex->owner = -1;
     return 0;
 }
 
-int my_mutex_lock(my_mutex_t *mutex) {
-    while (__sync_lock_test_and_set(&mutex->locked, true)) {
-        my_thread_yield();  // Esperar hasta que se libere
+int my_mutex_lock(my_mutex_t* mutex) {
+    if (!mutex) return -1;
+
+    while (__sync_lock_test_and_set(&mutex->locked, 1)) {
+        // Espera activa (busy wait)
+        my_thread_yield();  // alternativa a sleep
     }
 
-    mutex->owner = current_thread->id;
+    mutex->owner = current->tid;
     return 0;
 }
 
-int my_mutex_unlock(my_mutex_t *mutex) {
-    if (!mutex->locked || mutex->owner != get_current_thread()->id) {
-        return -1;
-    }
+int my_mutex_trylock(my_mutex_t* mutex) {
+    if (!mutex) return -1;
 
+    if (__sync_lock_test_and_set(&mutex->locked, 1) == 0) {
+        mutex->owner = current->tid;
+        return 0;  // éxito
+    }
+    return 1;  // ocupado
+}
+
+int my_mutex_unlock(my_mutex_t* mutex) {
+    if (!mutex || mutex->owner != current->tid) return -1;
     mutex->owner = -1;
-    mutex->locked = false;
+    __sync_lock_release(&mutex->locked);
     return 0;
 }
 
-int my_mutex_trylock(my_mutex_t *mutex) {
-    if (__sync_lock_test_and_set(&mutex->locked, true)) {
-        return -1;
-    }
-
-    mutex->owner = get_current_thread()->id;
-    return 0;
-}
-
-int my_mutex_destroy(my_mutex_t *mutex) {
-    if (mutex->locked) return -1;
+int my_mutex_destroy(my_mutex_t* mutex) {
+    if (!mutex) return -1;
+    // No necesitamos liberar nada, es una estructura simple
+    mutex->locked = 0;
     mutex->owner = -1;
     return 0;
 }
+

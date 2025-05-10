@@ -1,35 +1,60 @@
-#include "../include/mypthreads.h"
-#include "../include/scheduler.h"
-#include <stddef.h>
+#include "scheduler.h"
+#include <stdio.h>
+#include <stdlib.h>
 
-static my_thread_t *rr_queue = NULL;
+static tcb* rr_queue = NULL;
+extern ucontext_t main_context;
+extern tcb* current_thread;
 
-void scheduler_rr_add(my_thread_t *thread) {
+void rr_init() {
+    rr_queue = NULL;
+}
+
+void rr_add(tcb* thread) {
     thread->next = NULL;
-
     if (!rr_queue) {
         rr_queue = thread;
     } else {
-        my_thread_t *temp = rr_queue;
+        tcb* temp = rr_queue;
         while (temp->next) temp = temp->next;
         temp->next = thread;
     }
 }
 
-my_thread_t* scheduler_next_thread() {
-    static my_thread_t *last_rr = NULL;
-    if (!last_rr) last_rr = rr_queue;
+tcb* rr_next() {
+    if (!rr_queue) return NULL;
+    tcb* t = rr_queue;
+    rr_queue = rr_queue->next;
+    return t;
+}
 
-    my_thread_t *start = last_rr;
-    my_thread_t *current = last_rr;
+void rr_yield() {
+    tcb* prev = current_thread;
+    rr_add(prev);
+    tcb* next = rr_next();
+    if (next) {
+        current_thread = next;
+        swapcontext(&prev->context, &next->context);
+    }
+}
 
-    do {
-        current = current->next ? current->next : rr_queue;
-        if (!current->finished) {
-            last_rr = current;
-            return current;
-        }
-    } while (current != start);
+void rr_end() {
+    tcb* next = rr_next();
+    if (next) {
+        current_thread = next;
+        setcontext(&next->context);
+    } else {
+        printf("[RR] No hay más hilos. Regresando al main.\n");
+        setcontext(&main_context);
+    }
+}
 
-    return NULL;  // Todos terminaron
+void rr_run() {
+    tcb* next = rr_next();
+    if (next) {
+        current_thread = next;
+        swapcontext(&main_context, &next->context);
+    } else {
+        printf("[RR] No hay hilos listos para ejecutar.\n");
+    }
 }

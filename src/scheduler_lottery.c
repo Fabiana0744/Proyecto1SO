@@ -1,59 +1,89 @@
-// src/scheduler_lottery.c
-#include "../include/mypthreads.h"
-#include "../include/scheduler.h"
+#include "scheduler.h"
 #include <stdlib.h>
 #include <time.h>
+#include <stdio.h>
 
-static my_thread_t *lottery_queue = NULL;
+static tcb* lottery_queue = NULL;
+extern tcb* current_thread;
+extern ucontext_t main_context;
 
-void scheduler_lottery_add(my_thread_t *thread) {
+void lottery_init() {
+    lottery_queue = NULL;
+    srand(time(NULL)); // Inicializa rand()
+}
+
+void lottery_add(tcb* thread) {
     thread->next = NULL;
-
     if (!lottery_queue) {
         lottery_queue = thread;
     } else {
-        my_thread_t *temp = lottery_queue;
-        while (temp->next) temp = temp->next;
-        temp->next = thread;
+        tcb* tmp = lottery_queue;
+        while (tmp->next) tmp = tmp->next;
+        tmp->next = thread;
     }
 }
 
-// Función para obtener el siguiente hilo tipo LOTTERY
-my_thread_t *scheduler_next_lottery() {
-    my_thread_t *t = lottery_queue;
+tcb* lottery_next() {
     int total_tickets = 0;
-
-    // Contar los tickets de hilos vivos
-    while (t) {
-        if (!t->finished)
+    for (tcb* t = lottery_queue; t; t = t->next) {
+        if (t->state == READY) {
             total_tickets += (t->tickets > 0 ? t->tickets : 1);
-        t = t->next;
+        }
     }
 
-    if (total_tickets == 0)
-        return NULL;
+    if (total_tickets == 0) return NULL;
 
-    int winner = (rand() % total_tickets) + 1;
-    int count = 0;
+    int winning_ticket = (rand() % total_tickets) + 1;
+    int counter = 0;
 
-    // Buscar el hilo ganador
-    my_thread_t *prev = NULL;
-    t = lottery_queue;
-    while (t) {
-        if (!t->finished) {
-            count += (t->tickets > 0 ? t->tickets : 1);
-            if (count >= winner) {
-                // Mover hilo al final (Round-Robin-like fairness)
-                if (prev) prev->next = t->next;
-                else lottery_queue = t->next;
-                t->next = NULL;
-                scheduler_lottery_add(t);  // Reencolar al final
-                return t;
+    tcb* prev = NULL;
+    tcb* curr = lottery_queue;
+
+    while (curr) {
+        if (curr->state == READY) {
+            counter += (curr->tickets > 0 ? curr->tickets : 1);
+            if (counter >= winning_ticket) {
+                if (prev) prev->next = curr->next;
+                else lottery_queue = curr->next;
+                curr->next = NULL;
+                return curr;
             }
         }
-        prev = t;
-        t = t->next;
+        prev = curr;
+        curr = curr->next;
     }
 
     return NULL;
+}
+
+void lottery_yield() {
+    tcb* prev = current_thread;
+    lottery_add(current_thread);
+    tcb* next = lottery_next();
+
+    if (next) {
+        current_thread = next;
+        swapcontext(&prev->context, &next->context);
+    }
+}
+
+void lottery_end() {
+    tcb* next = lottery_next();
+    if (next) {
+        current_thread = next;
+        setcontext(&next->context);
+    } else {
+        printf("[LOTTERY] No hay más hilos. Volviendo a main.\n");
+        setcontext(&main_context);
+    }
+}
+
+void lottery_run() {
+    tcb* next = lottery_next();
+    if (next) {
+        current_thread = next;
+        swapcontext(&main_context, &next->context);
+    } else {
+        printf("[LOTTERY] No hay hilos listos.\n");
+    }
 }
