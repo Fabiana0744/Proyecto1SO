@@ -12,19 +12,30 @@ int main() {
         return 1;
     }
 
-    NetPacket pkt;
-    if (recv_packet(sock, &pkt) <= 0) {
-        printf("❌ Error recibiendo paquete\n");
-        return 1;
-    }
+    printf("🕓 Esperando canvas del servidor...\n");
 
-    printf("📺 Canvas recibido (%dx%d) en posición (%d, %d):\n", pkt.width, pkt.height, pkt.x, pkt.y);
-    for (int i = 0; i < pkt.height; i++) {
-        for (int j = 0; j < pkt.width; j++) {
-            putchar(pkt.data[i][j]);
+    while (1) {
+        NetPacket pkt;
+        if (recv_packet(sock, &pkt) <= 0) {
+            perror("recv_packet");
+            printf("❌ Error recibiendo paquete (¿servidor cerró?)\n");
+            break;
         }
-        putchar('\n');
+    
+        // Limpiar pantalla antes de mostrar
+        printf("\033[H\033[J"); // ANSI clear screen
+    
+        printf("📺 Canvas recibido (%dx%d) en posición (%d, %d):\n", pkt.width, pkt.height, pkt.x, pkt.y);
+        for (int i = 0; i < pkt.height; i++) {
+            for (int j = 0; j < pkt.width; j++) {
+                putchar(pkt.data[i][j]);
+            }
+            putchar('\n');
+        }
+    
+        usleep(50000); // ~20 FPS
     }
+    
 
     close(sock);
     return 0;

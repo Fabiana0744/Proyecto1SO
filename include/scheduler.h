@@ -25,7 +25,7 @@ void scheduler_run();
 // Cambiar tipo de scheduler (si se soporta en tiempo de ejecución)
 void scheduler_set_type(scheduler_type_t type);
 
-extern tcb* current_thread;
+extern tcb* current;
 
 
 

@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 static tcb* lottery_queue = NULL;
-extern tcb* current_thread;
+extern tcb* current;
 extern ucontext_t main_context;
 
 void lottery_init() {
@@ -57,12 +57,12 @@ tcb* lottery_next() {
 }
 
 void lottery_yield() {
-    tcb* prev = current_thread;
-    lottery_add(current_thread);
+    tcb* prev = current;
+    lottery_add(current);
     tcb* next = lottery_next();
 
     if (next) {
-        current_thread = next;
+        current = next;
         swapcontext(&prev->context, &next->context);
     }
 }
@@ -70,7 +70,7 @@ void lottery_yield() {
 void lottery_end() {
     tcb* next = lottery_next();
     if (next) {
-        current_thread = next;
+        current = next;
         setcontext(&next->context);
     } else {
         printf("[LOTTERY] No hay más hilos. Volviendo a main.\n");
@@ -81,7 +81,7 @@ void lottery_end() {
 void lottery_run() {
     tcb* next = lottery_next();
     if (next) {
-        current_thread = next;
+        current = next;
         swapcontext(&main_context, &next->context);
     } else {
         printf("[LOTTERY] No hay hilos listos.\n");

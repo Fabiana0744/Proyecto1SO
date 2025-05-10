@@ -3,12 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
+#include "scheduler.h"
 
 #define MAX_THREADS 128
 
-static tcb* current = NULL;
+tcb* current = NULL;
 static tcb* ready_queue = NULL;
-static ucontext_t main_context;
+ucontext_t main_context;
 static int next_tid = 1;
 static tcb* all_threads[MAX_THREADS] = { NULL };
 
@@ -64,7 +65,7 @@ int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* a
     all_threads[new_thread->tid] = new_thread;
 
     makecontext(&new_thread->context, (void (*)())start_routine, 1, arg);
-    enqueue(new_thread);
+    scheduler_add(new_thread);  // ✅ esto encola en el scheduler activo
     return 0;
 }
 
@@ -138,6 +139,40 @@ int my_thread_detach(my_thread_t thread) {
     return 0;
 }
 
+
+
+int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
+                      int tickets, long time_start, long time_end, long deadline) {
+    if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
+        return -1; // ID inválido
+    }
+
+    tcb* target = all_threads[tid];
+
+    switch (new_sched) {
+        case SCHED_RR:
+            // No necesita parámetros
+            break;
+
+        case SCHED_LOTTERY:
+            target->tickets = (tickets > 0) ? tickets : 1;
+            break;
+
+        case SCHED_REALTIME:
+            target->time_start = time_start;
+            target->time_end = time_end;
+            target->deadline = deadline;
+            break;
+
+        default:
+            return -1; // scheduler no reconocido
+    }
+
+    target->sched_type = new_sched; // Asegúrate que el TCB tenga este campo
+    return 0;
+}
+
+
 #include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
 
 int my_mutex_init(my_mutex_t* mutex) {
@@ -147,17 +182,38 @@ int my_mutex_init(my_mutex_t* mutex) {
     return 0;
 }
 
-int my_mutex_lock(my_mutex_t* mutex) {
-    if (!mutex) return -1;
+#include <stdio.h>  // Para fprintf
 
+int my_mutex_lock(my_mutex_t* mutex) {
+    // Validación de puntero nulo
+    if (!mutex) {
+        fprintf(stderr, "❌ [ERROR] mutex es NULL en my_mutex_lock()\n");
+        return -1;
+    }
+
+    // Validación de dirección inválida (opcional pero útil)
+    if ((void*)mutex < (void*)0x1000) {
+        fprintf(stderr, "❌ [ERRmOR] mutex apunta a dirección inválida: %p\n", (void*)mutex);
+        return -1;
+    }
+
+    // Mensaje de depuración antes de intentar bloquear
+    printf("🔐 [LOCK] Intentando mutex %p | locked=%d | owner=%d\n", 
+           (void*)mutex, mutex->locked, mutex->owner);
+
+    // Busy wait hasta obtener el lock
     while (__sync_lock_test_and_set(&mutex->locked, 1)) {
-        // Espera activa (busy wait)
-        my_thread_yield();  // alternativa a sleep
+        my_thread_yield();  // Evita consumo innecesario de CPU
     }
 
     mutex->owner = current->tid;
+
+    // Confirmación de que el lock fue adquirido
+    printf("✅ [LOCK] mutex %p adquirido por tid=%d\n", (void*)mutex, current ? current->tid : -1);
+
     return 0;
 }
+
 
 int my_mutex_trylock(my_mutex_t* mutex) {
     if (!mutex) return -1;

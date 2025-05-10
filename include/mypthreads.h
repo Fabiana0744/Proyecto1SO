@@ -48,6 +48,7 @@ int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
 
 
 
+
 // MUTEX
 typedef struct {
     int locked;         // 0 libre, 1 ocupado

@@ -4,7 +4,7 @@
 
 static tcb* realtime_queue = NULL;
 extern ucontext_t main_context;
-extern tcb* current_thread;
+extern tcb* current;
 
 extern long get_current_time_ms(); // si está en utils
 
@@ -65,24 +65,24 @@ tcb* realtime_next() {
 void realtime_yield() {
     long now = get_current_time_ms();
 
-    if (current_thread && !current_thread->finished) {
-        realtime_add(current_thread);
+    if (current && !current->finished) {
+        realtime_add(current);
     }
 
     tcb* next = realtime_next();
     if (next) {
-        tcb* prev = current_thread;
-        current_thread = next;
+        tcb* prev = current;
+        current = next;
         swapcontext(&prev->context, &next->context);
     }
 }
 
 void realtime_end() {
-    current_thread->finished = true;
+    current->finished = true;
 
     tcb* next = realtime_next();
     if (next) {
-        current_thread = next;
+        current = next;
         setcontext(&next->context);
     } else {
         printf("[REALTIME] No hay más hilos activos. Finalizando...\n");
@@ -93,7 +93,7 @@ void realtime_end() {
 void realtime_run() {
     tcb* next = realtime_next();
     if (next) {
-        current_thread = next;
+        current = next;
         swapcontext(&main_context, &next->context);
     } else {
         printf("[REALTIME] Nada para ejecutar.\n");

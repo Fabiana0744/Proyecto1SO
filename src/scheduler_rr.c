@@ -4,7 +4,7 @@
 
 static tcb* rr_queue = NULL;
 extern ucontext_t main_context;
-extern tcb* current_thread;
+extern tcb* current;
 
 void rr_init() {
     rr_queue = NULL;
@@ -29,11 +29,11 @@ tcb* rr_next() {
 }
 
 void rr_yield() {
-    tcb* prev = current_thread;
+    tcb* prev = current;
     rr_add(prev);
     tcb* next = rr_next();
     if (next) {
-        current_thread = next;
+        current = next;
         swapcontext(&prev->context, &next->context);
     }
 }
@@ -41,7 +41,7 @@ void rr_yield() {
 void rr_end() {
     tcb* next = rr_next();
     if (next) {
-        current_thread = next;
+        current = next;
         setcontext(&next->context);
     } else {
         printf("[RR] No hay más hilos. Regresando al main.\n");
@@ -52,7 +52,7 @@ void rr_end() {
 void rr_run() {
     tcb* next = rr_next();
     if (next) {
-        current_thread = next;
+        current = next;
         swapcontext(&main_context, &next->context);
     } else {
         printf("[RR] No hay hilos listos para ejecutar.\n");
