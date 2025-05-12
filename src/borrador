@@ -59,6 +59,9 @@ void* animar_objeto(void* arg) {
     int pasos = abs(obj->x_end - obj->x_start);
     int dx = (obj->x_end > obj->x_start) ? 1 : -1;
     obj->current_x = obj->x_start;
+    obj->current_y = obj->y_start;
+
+    
 
     printf("🧵 Iniciando hilo para objeto en y=%d\n", obj->current_y);
 

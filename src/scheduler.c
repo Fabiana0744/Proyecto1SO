@@ -1,5 +1,7 @@
 #include "scheduler.h"
 #include <stdlib.h>
+#include <stdio.h>
+
 
 // --- Referencias externas de cada scheduler específico ---
 extern void rr_init();
@@ -95,14 +97,19 @@ void scheduler_end() {
     }
 }
 
-// --- Inicia la ejecución del primer hilo ---
 void scheduler_run() {
+    printf("🕹️ Usando scheduler tipo: %d\n", current_type);  // 🐞 Depuración
+
     switch (current_type) {
         case SCHED_RR:
+            printf("🚦 Ejecutando scheduler Round Robin...\n");
             rr_run(); break;
         case SCHED_LOTTERY:
+            printf("🎟️ Ejecutando scheduler Lottery...\n");
             lottery_run(); break;
         case SCHED_REALTIME:
+            printf("⏱️ Ejecutando scheduler RealTime...\n");
             realtime_run(); break;
     }
 }
+

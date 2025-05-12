@@ -59,7 +59,8 @@ void* animar_objeto(void* arg) {
     int pasos = abs(obj->x_end - obj->x_start);
     int dx = (obj->x_end > obj->x_start) ? 1 : -1;
     obj->current_x = obj->x_start;
-
+    obj->current_y = obj->y_start;  // ✅ FALTABA ESTO
+    
     printf("🧵 Iniciando hilo para objeto en y=%d\n", obj->current_y);
 
     for (int p = 0; p <= pasos; p++) {
@@ -162,6 +163,7 @@ int main() {
         printf("✅ Monitor %d conectado.\n", i);
     }
 
+    scheduler_set_type(objetos[0].scheduler);
     // Iniciar scheduler ANTES de agregar hilos
     scheduler_init();
 
