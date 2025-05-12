@@ -65,7 +65,7 @@ int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* a
     all_threads[new_thread->tid] = new_thread;
 
     makecontext(&new_thread->context, (void (*)())start_routine, 1, arg);
-    scheduler_add(new_thread);  // ✅ esto encola en el scheduler activo
+    //scheduler_add(new_thread);  // esto encola en el scheduler activo
     return 0;
 }
 
@@ -147,35 +147,33 @@ int my_thread_detach(my_thread_t thread) {
 
 
 int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
-                      int tickets, long time_start, long time_end, long deadline) {
-    if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
-        return -1; // ID inválido
-    }
-
-    tcb* target = all_threads[tid];
-
-    switch (new_sched) {
-        case SCHED_RR:
-            // No necesita parámetros
-            break;
-
-        case SCHED_LOTTERY:
-            target->tickets = (tickets > 0) ? tickets : 1;
-            break;
-
-        case SCHED_REALTIME:
-            target->time_start = time_start;
-            target->time_end = time_end;
-            target->deadline = deadline;
-            break;
-
-        default:
-            return -1; // scheduler no reconocido
-    }
-
-    target->sched_type = new_sched; // Asegúrate que el TCB tenga este campo
-    return 0;
+    int tickets, long time_start, long time_end, long deadline) {
+if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
+return -1;
 }
+
+tcb* target = all_threads[tid];
+target->sched_type = new_sched; // primero asignamos tipo
+
+switch (new_sched) {
+case SCHED_RR:
+break;
+case SCHED_LOTTERY:
+target->tickets = (tickets > 0) ? tickets : 1;
+break;
+case SCHED_REALTIME:
+target->time_start = time_start;
+target->time_end = time_end;
+target->deadline = deadline;
+break;
+default:
+return -1;
+}
+
+scheduler_add(target);  // aquí ya sabemos su tipo
+return 0;
+}
+
 
 
 #include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
@@ -192,13 +190,13 @@ int my_mutex_init(my_mutex_t* mutex) {
 int my_mutex_lock(my_mutex_t* mutex) {
     // Validación de puntero nulo
     if (!mutex) {
-        fprintf(stderr, "❌ [ERROR] mutex es NULL en my_mutex_lock()\n");
+        fprintf(stderr, "[ERROR] mutex es NULL en my_mutex_lock()\n");
         return -1;
     }
 
     // Validación de dirección inválida (opcional pero útil)
     if ((void*)mutex < (void*)0x1000) {
-        fprintf(stderr, "❌ [ERRmOR] mutex apunta a dirección inválida: %p\n", (void*)mutex);
+        fprintf(stderr, "[ERROR] mutex apunta a dirección inválida: %p\n", (void*)mutex);
         return -1;
     }
 

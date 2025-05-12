@@ -11,6 +11,7 @@ void rr_init() {
 }
 
 void rr_add(tcb* thread) {
+    printf("🌀 [RR] Añadiendo hilo tid=%d al scheduler Round Robin\n", thread->tid);
     thread->next = NULL;
     if (!rr_queue) {
         rr_queue = thread;
@@ -52,6 +53,7 @@ void rr_end() {
 void rr_run() {
     tcb* next = rr_next();
     if (next) {
+        printf("🚀 [ROUND ROBIN] Iniciando ejecución con tid=%d\n", next->tid);
         current = next;
         swapcontext(&main_context, &next->context);
     } else {

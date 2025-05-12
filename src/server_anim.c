@@ -139,7 +139,6 @@ int main() {
             o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
     }
 
-
     canvas_width = config.width;
     canvas_height = config.height;
     num_monitors = config.num_monitors;
@@ -152,7 +151,6 @@ int main() {
     my_mutex_init(&canvas_mutex);
     printf("✅ canvas_mutex inicializado en: %p\n", (void*)&canvas_mutex);
 
-
     // Iniciar sockets
     int server_fd = create_server_socket(PORT);
 
@@ -163,49 +161,40 @@ int main() {
         printf("✅ Monitor %d conectado.\n", i);
     }
 
-    scheduler_set_type(objetos[0].scheduler);
-    // Iniciar scheduler ANTES de agregar hilos
+    // Inicializar todos los schedulers
     scheduler_init();
 
     // Crear hilos para cada objeto
     for (int i = 0; i < total_objetos; i++) {
         printf("🔄 Creando hilo para objeto %d...\n", i);
-    
-        // ⚠️ Paso 1: Reservar y limpiar memoria
+
         ObjetoAnimado* copia = malloc(sizeof(ObjetoAnimado));
         if (!copia) {
             printf("❌ Error al reservar memoria para objeto %d\n", i);
             continue;
         }
-        memset(copia, 0, sizeof(ObjetoAnimado)); // limpia todos los campos
-    
-        // ⚠️ Paso 2: Copiar valores escalares
-        *copia = objetos[i]; // copia los enteros, punteros, etc.
-    
-        // ⚠️ Paso 3: Copia profunda de la figura ASCII
+        memset(copia, 0, sizeof(ObjetoAnimado));
+        *copia = objetos[i];
+
         copia->shape = malloc(sizeof(char*) * copia->shape_height);
         if (!copia->shape) {
-            printf("❌ Error al reservar memoria para shape del objeto %d\n", i);
             free(copia);
             continue;
         }
-    
+
         for (int r = 0; r < copia->shape_height; r++) {
             copia->shape[r] = strdup(objetos[i].shape[r]);
             if (!copia->shape[r]) {
-                printf("❌ Error duplicando línea %d del shape\n", r);
-                // libera todo lo anterior
                 for (int k = 0; k < r; k++) free(copia->shape[k]);
                 free(copia->shape);
                 free(copia);
                 continue;
             }
         }
-    
-        // ⚠️ Validación antes de crear el hilo
+
         printf("📦 Objeto %d copiado: y_start=%d x_start=%d shape[0]='%s'\n", 
             i, copia->y_start, copia->x_start, copia->shape[0]);
-    
+
         my_thread_t t;
         int res = my_thread_create(&t, animar_objeto, copia);
         if (res != 0) {
@@ -215,9 +204,9 @@ int main() {
             free(copia);
             continue;
         }
-    
+
         printf("✅ Hilo creado para objeto %d (tid = %d)\n", i, t);
-    
+
         int sched = my_thread_chsched(t,
             copia->scheduler,
             copia->tickets,
@@ -225,20 +214,18 @@ int main() {
             copia->time_end,
             copia->deadline
         );
-    
+
         if (sched != 0) {
             printf("⚠️  Error asignando scheduler a objeto %d\n", i);
         }
-    }    
+    }
 
-    // Ejecutar scheduler
+    // Ejecutar scheduler mixto
     scheduler_run();
 
-
     while (1) {
-        usleep(100000); // espera 100ms
+        usleep(100000);
     }
-    
 
     close(server_fd);
     return 0;

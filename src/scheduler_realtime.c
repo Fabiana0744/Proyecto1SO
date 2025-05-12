@@ -13,6 +13,8 @@ void realtime_init() {
 }
 
 void realtime_add(tcb* thread) {
+    printf("⏱️ [REALTIME] Añadiendo hilo tid=%d con deadline=%ld, start=%ld, end=%ld\n",
+        thread->tid, thread->deadline, thread->time_start, thread->time_end);
     thread->next = NULL;
     if (!realtime_queue) {
         realtime_queue = thread;
@@ -93,6 +95,7 @@ void realtime_end() {
 void realtime_run() {
     tcb* next = realtime_next();
     if (next) {
+        printf("🚀 [REALTIME] Iniciando ejecución con tid=%d\n", next->tid);
         current = next;
         swapcontext(&main_context, &next->context);
     } else {

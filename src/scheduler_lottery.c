@@ -13,6 +13,7 @@ void lottery_init() {
 }
 
 void lottery_add(tcb* thread) {
+    printf("🎟️ [LOTTERY] Añadiendo hilo tid=%d con %d tickets\n", thread->tid, thread->tickets);
     thread->next = NULL;
     if (!lottery_queue) {
         lottery_queue = thread;
@@ -81,6 +82,7 @@ void lottery_end() {
 void lottery_run() {
     tcb* next = lottery_next();
     if (next) {
+        printf("🚀 [LOTTERY] Iniciando ejecución con tid=%d\n", next->tid);
         current = next;
         swapcontext(&main_context, &next->context);
     } else {
