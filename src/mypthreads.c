@@ -13,12 +13,22 @@ ucontext_t main_context;
 static int next_tid = 1;
 static tcb* all_threads[MAX_THREADS] = { NULL };
 
+
 #include <sys/time.h>
+
+static long program_start_ms = 0;
+
+void init_timer() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    program_start_ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 long get_current_time_ms() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (tv.tv_sec * 1000L) + (tv.tv_usec / 1000L);
+    long now = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    return now - program_start_ms;
 }
 
 

@@ -25,6 +25,7 @@ extern void realtime_end();
 extern tcb* current;
 extern ucontext_t main_context;
 
+
 // --- Inicializa todos los schedulers ---
 void scheduler_init() {
     rr_init();

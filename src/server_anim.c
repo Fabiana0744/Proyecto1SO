@@ -117,6 +117,8 @@ void* animar_objeto(void* arg) {
 
 
 int main() {
+    init_timer();  // ⏱️ iniciar contador relativo desde 0
+
     // Leer configuración
     CanvasConfig config;
     if (read_config("config/animation.ini", &config) != 0) {
