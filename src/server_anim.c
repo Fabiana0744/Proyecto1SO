@@ -59,17 +59,38 @@ void* animar_objeto(void* arg) {
     int pasos = abs(obj->x_end - obj->x_start);
     int dx = (obj->x_end > obj->x_start) ? 1 : -1;
     obj->current_x = obj->x_start;
-    obj->current_y = obj->y_start;  // ✅ FALTABA ESTO
-    
-    printf("🧵 Iniciando hilo para objeto en y=%d\n", obj->current_y);
+    obj->current_y = obj->y_start;
+
+    printf("🧵 Hilo creado para objeto con tid=%d | Esperando time_start=%ld s...\n", current->tid, obj->time_start);
+
+    // ⏳ Esperar hasta time_start (para todos los schedulers)
+    long start_ms = obj->time_start * 1000;
+    while (get_current_time_ms() < start_ms) {
+        my_thread_yield();
+        usleep(50000);
+    }
+
+    printf("🚦 Inicia animación de tid=%d (time_start alcanzado)\n", current->tid);
 
     for (int p = 0; p <= pasos; p++) {
-        printf("➡️ Hilo tid=%d paso %d/%d\n", current->tid, p, pasos);
+        long now = get_current_time_ms();
+
+        // ⏹️ Salir de escena si pasó el tiempo de fin
+        if (now > obj->time_end * 1000) {
+            printf("🛑 Objeto tid=%d salió de escena (time_end alcanzado)\n", current->tid);
+
+            if (obj->scheduler == SCHED_REALTIME) {
+                printf("💥 EXPLOSIÓN: tid=%d superó su tiempo_end (%ld ms)\n", current->tid, obj->time_end * 1000);
+                current->finished = true;
+                current->must_cleanup = true;
+            }
+
+            break;  // salir del for
+        }
 
         my_mutex_lock(&canvas_mutex);
-        printf("✅ canvas_mutex inicializado: %p\n", (void*)&canvas_mutex);
 
-        // Borrar figura anterior
+        // 🧹 Borrar figura anterior
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
                 int y = obj->current_y + i;
@@ -81,10 +102,10 @@ void* animar_objeto(void* arg) {
             }
         }
 
-        // Avanzar una posición
+        // ➡️ Avanzar
         obj->current_x += dx;
 
-        // Dibujar nueva posición
+        // 🎨 Dibujar nueva figura
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
                 int y = obj->current_y + i;
@@ -97,14 +118,15 @@ void* animar_objeto(void* arg) {
         }
 
         my_mutex_unlock(&canvas_mutex);
+
         enviar_canvas_a_clientes(canvas);
-        usleep(150000);
+        usleep(150000);  // velocidad de animación
         my_thread_yield();
     }
 
-    printf("🏁 Hilo tid=%d terminó\n", current->tid);
+    printf("🏁 Hilo tid=%d terminó su animación\n", current->tid);
 
-    // 🧹 Liberar figura
+    // 🧹 Liberar memoria de figura
     for (int i = 0; i < obj->shape_height; i++) {
         free(obj->shape[i]);
     }
@@ -114,6 +136,7 @@ void* animar_objeto(void* arg) {
     my_thread_end(NULL);
     return NULL;
 }
+
 
 
 int main() {
