@@ -53,6 +53,46 @@ void enviar_canvas_a_clientes(char canvas[][CANVAS_WIDTH]) {
     }
 }
 
+void rotate_matrix_once(char** src, int* rows, int* cols, int angle) {
+    if (angle == 0) return;
+
+    int new_rows = (angle == 90 || angle == 270) ? *cols : *rows;
+    int new_cols = (angle == 90 || angle == 270) ? *rows : *cols;
+
+    // Crear matriz temporal
+    char** dst = malloc(sizeof(char*) * new_rows);
+    for (int i = 0; i < new_rows; i++) {
+        dst[i] = malloc(sizeof(char) * (new_cols + 1));
+        memset(dst[i], ' ', new_cols);
+        dst[i][new_cols] = '\0';
+    }
+
+    // Rotar matriz
+    for (int i = 0; i < *rows; i++) {
+        for (int j = 0; j < *cols; j++) {
+            char c = src[i][j];
+            if (angle == 90)
+                dst[j][*rows - 1 - i] = c;
+            else if (angle == 180)
+                dst[*rows - 1 - i][*cols - 1 - j] = c;
+            else if (angle == 270)
+                dst[*cols - 1 - j][i] = c;
+            else
+                dst[i][j] = c;
+        }
+    }
+
+    // Liberar figura original
+    for (int i = 0; i < *rows; i++) free(src[i]);
+    free(src);
+
+    // Asignar nueva figura
+    *rows = new_rows;
+    *cols = new_cols;
+    src = dst;
+}
+
+
 // 🧵 Hilo para animar un objeto
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
@@ -61,7 +101,44 @@ void* animar_objeto(void* arg) {
     obj->current_x = obj->x_start;
     obj->current_y = obj->y_start;
 
-    printf("🧵 Hilo creado para objeto con tid=%d | Esperando time_start=%ld s...\n", current->tid, obj->time_start);
+    // 🔄 Aplicar rotación fija si se indica
+    if (obj->rotation != 0) {
+        printf("🔄 Rotando objeto tid=%d en %d°\n", current->tid, obj->rotation);
+
+        int new_rows = (obj->rotation == 90 || obj->rotation == 270) ? obj->shape_width : obj->shape_height;
+        int new_cols = (obj->rotation == 90 || obj->rotation == 270) ? obj->shape_height : obj->shape_width;
+
+        char** rotated = malloc(sizeof(char*) * new_rows);
+        for (int i = 0; i < new_rows; i++) {
+            rotated[i] = malloc(new_cols + 1);
+            memset(rotated[i], ' ', new_cols);
+            rotated[i][new_cols] = '\0';
+        }
+
+        for (int i = 0; i < obj->shape_height; i++) {
+            for (int j = 0; j < obj->shape_width; j++) {
+                char c = obj->shape[i][j];
+                if (obj->rotation == 90)
+                    rotated[j][obj->shape_height - 1 - i] = c;
+                else if (obj->rotation == 180)
+                    rotated[obj->shape_height - 1 - i][obj->shape_width - 1 - j] = c;
+                else if (obj->rotation == 270)
+                    rotated[obj->shape_width - 1 - j][i] = c;
+                else
+                    rotated[i][j] = c;
+            }
+        }
+
+        // Liberar la forma original
+        for (int i = 0; i < obj->shape_height; i++)
+            free(obj->shape[i]);
+        free(obj->shape);
+
+        // Asignar la rotada
+        obj->shape = rotated;
+        obj->shape_height = new_rows;
+        obj->shape_width = new_cols;
+    }
 
     // ⏳ Esperar hasta time_start (para todos los schedulers)
     long start_ms = obj->time_start * 1000;
