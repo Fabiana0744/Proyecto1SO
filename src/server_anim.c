@@ -117,8 +117,7 @@ void* animar_objeto(void* arg) {
 
 
 int main() {
-    init_timer();  // ⏱️ iniciar contador relativo desde 0
-
+    
     // Leer configuración
     CanvasConfig config;
     if (read_config("config/animation.ini", &config) != 0) {
@@ -140,6 +139,7 @@ int main() {
             i, o->x_start, o->y_start, o->x_end, o->y_end,
             o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
     }
+    init_timer();  // ⏱️ iniciar contador relativo desde 0
 
     canvas_width = config.width;
     canvas_height = config.height;

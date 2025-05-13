@@ -51,12 +51,22 @@ tcb* scheduler_next() {
 
 // --- Yield para el hilo actual según su tipo ---
 void scheduler_yield() {
+    if (current == NULL) {
+        printf("⚠️ [scheduler_yield] current es NULL\n");
+        return;
+    }
+
+    printf("[scheduler_yield] tid=%d sched=%d\n", current->tid, current->sched_type);
+
     switch (current->sched_type) {
         case SCHED_RR:       rr_yield(); break;
         case SCHED_LOTTERY:  lottery_yield(); break;
         case SCHED_REALTIME: realtime_yield(); break;
+        default:
+            printf("❌ [scheduler_yield] Tipo de scheduler no reconocido: %d\n", current->sched_type);
     }
 }
+
 
 // --- End para el hilo actual según su tipo ---
 void scheduler_end() {

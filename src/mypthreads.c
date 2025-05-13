@@ -80,15 +80,7 @@ int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* a
 }
 
 int my_thread_yield(void) {
-    tcb* prev = current;
-    scheduler_add(current);         // reencolar el hilo actual
-    tcb* next = scheduler_next();   // tomar siguiente hilo
-
-    if (next) {
-        current = next;
-        swapcontext(&prev->context, &next->context);
-    }
-
+    scheduler_yield();  // ✅ Aquí se respeta el tipo de scheduler del hilo actual
     return 0;
 }
 
@@ -158,30 +150,30 @@ int my_thread_detach(my_thread_t thread) {
 
 int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
     int tickets, long time_start, long time_end, long deadline) {
-if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
-return -1;
-}
+    if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
+    return -1;
+    }
 
-tcb* target = all_threads[tid];
-target->sched_type = new_sched; // primero asignamos tipo
+    tcb* target = all_threads[tid];
+    target->sched_type = new_sched; // primero asignamos tipo
 
-switch (new_sched) {
-case SCHED_RR:
-break;
-case SCHED_LOTTERY:
-target->tickets = (tickets > 0) ? tickets : 1;
-break;
-case SCHED_REALTIME:
-target->time_start = time_start;
-target->time_end = time_end;
-target->deadline = deadline;
-break;
-default:
-return -1;
-}
+    switch (new_sched) {
+    case SCHED_RR:
+    break;
+    case SCHED_LOTTERY:
+    target->tickets = (tickets > 0) ? tickets : 1;
+    break;
+    case SCHED_REALTIME:
+    target->time_start = time_start;
+    target->time_end = time_end;
+    target->deadline = deadline;
+    break;
+    default:
+    return -1;
+    }
 
-scheduler_add(target);  // aquí ya sabemos su tipo
-return 0;
+    scheduler_add(target);  // aquí ya sabemos su tipo
+    return 0;
 }
 
 

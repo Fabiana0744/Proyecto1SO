@@ -64,13 +64,21 @@ void realtime_add(tcb* thread) {
 
 void realtime_yield(void) {
     long now = get_current_time_ms();
+    printf("⏱️ [REALTIME] Yield llamado. now = %ld ms\n", now);
 
     if (current && !current->finished) {
-        if (now > current->time_end * 1000) {
-            printf("\n💥 Hilo %d explotó (now=%ld > end=%ld)\n", current->tid, now, current->time_end * 1000);
+        long end_ms = current->time_end * 1000;
+        printf("⏱️ [REALTIME] tid=%d | now=%ld | end=%ld\n", current->tid, now, end_ms);
+
+        if (now > end_ms) {
+            printf("\n💥 Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n", current->tid, now, end_ms);
             current->finished = true;
             current->must_cleanup = true;
+
+            scheduler_end();  // 🚨 Terminar inmediatamente el hilo
+            return;
         } else {
+            printf("⏱️ [REALTIME] Reinsertando hilo tid=%d (dentro de tiempo)\n", current->tid);
             realtime_add(current);
         }
     }
