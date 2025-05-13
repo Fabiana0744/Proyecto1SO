@@ -13,7 +13,9 @@ typedef struct {
 
     int current_x, current_y;
 
-    int rotation;
+    int rotation_start;
+
+    int rotation_end;
 
     scheduler_type_t scheduler;
     int tickets;

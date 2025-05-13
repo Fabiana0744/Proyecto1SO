@@ -40,7 +40,8 @@ static int handler(void* user, const char* section, const char* name, const char
         else if (strcmp(name, "y_start") == 0) current_obj->y_start = atoi(value);
         else if (strcmp(name, "x_end") == 0) current_obj->x_end = atoi(value);
         else if (strcmp(name, "y_end") == 0) current_obj->y_end = atoi(value);
-        else if (strcmp(name, "rotation") == 0) current_obj->rotation = atoi(value);
+        else if (strcmp(name, "rotation_start") == 0) current_obj->rotation_start = atoi(value);
+        else if (strcmp(name, "rotation_end") == 0) current_obj->rotation_end = atoi(value);
         else if (strcmp(name, "tickets") == 0) current_obj->tickets = atoi(value);
         else if (strcmp(name, "time_start") == 0) current_obj->time_start = atol(value);
         else if (strcmp(name, "time_end") == 0) current_obj->time_end = atol(value);
