@@ -88,6 +88,9 @@ int my_thread_yield(void) {
 void my_thread_end(void* retval) {
     current->state = FINISHED;
     current->retval = retval;
+    current->finished = true;  // 🔁 importante para saber que el hilo terminó
+
+    printf("✅ Hilo con tid = %d terminó su animación\n", current->tid);
 
     if (current->waiting_for_me) {
         scheduler_add(current->waiting_for_me);
@@ -107,6 +110,7 @@ void my_thread_end(void* retval) {
         setcontext(&main_context);
     }
 }
+
 
 
 int my_thread_join(my_thread_t thread, void** retval) {
