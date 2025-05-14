@@ -92,9 +92,11 @@ void rotate_matrix_once(char** src, int* rows, int* cols, int angle) {
     src = dst;
 }
 
-char** rotate_shape_matrix(char** shape, int* rows, int* cols, int angle) {
-    int new_rows = (angle == 90 || angle == 270) ? *cols : *rows;
-    int new_cols = (angle == 90 || angle == 270) ? *rows : *cols;
+char** rotate_shape_matrix(char** shape, int* rows, int* cols, int angle, ObjetoAnimado* obj) {
+    int old_rows = *rows;
+    int old_cols = *cols;
+    int new_rows = (angle == 90 || angle == 270) ? old_cols : old_rows;
+    int new_cols = (angle == 90 || angle == 270) ? old_rows : old_cols;
 
     char** rotated = malloc(sizeof(char*) * new_rows);
     for (int i = 0; i < new_rows; i++) {
@@ -103,22 +105,29 @@ char** rotate_shape_matrix(char** shape, int* rows, int* cols, int angle) {
         rotated[i][new_cols] = '\0';
     }
 
-    for (int i = 0; i < *rows; i++) {
-        for (int j = 0; j < *cols; j++) {
+    for (int i = 0; i < old_rows; i++) {
+        for (int j = 0; j < old_cols; j++) {
             char c = shape[i][j];
             if (angle == 90)
-                rotated[j][*rows - 1 - i] = c;
+                rotated[j][old_rows - 1 - i] = c;
             else if (angle == 180)
-                rotated[*rows - 1 - i][*cols - 1 - j] = c;
+                rotated[old_rows - 1 - i][old_cols - 1 - j] = c;
             else if (angle == 270)
-                rotated[*cols - 1 - j][i] = c;
+                rotated[old_cols - 1 - j][i] = c;
             else
                 rotated[i][j] = c;
         }
     }
 
-    // liberar original
-    for (int i = 0; i < *rows; i++) free(shape[i]);
+    // Compensar cambio de tamaño para mantener centro visual
+    int delta_w = new_cols - old_cols;
+    int delta_h = new_rows - old_rows;
+
+    obj->current_x -= delta_w / 2;
+    obj->current_y -= delta_h / 2;
+
+    // Limpiar figura original
+    for (int i = 0; i < old_rows; i++) free(shape[i]);
     free(shape);
 
     *rows = new_rows;
@@ -126,16 +135,24 @@ char** rotate_shape_matrix(char** shape, int* rows, int* cols, int angle) {
     return rotated;
 }
 
-
-// 🧵 Hilo para animar un objeto
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
-    int pasos = abs(obj->x_end - obj->x_start);
-    int dx = (obj->x_end > obj->x_start) ? 1 : -1;
-    obj->current_x = obj->x_start;
-    obj->current_y = obj->y_start;
 
-    // 🔄 ROTACIÓN PROGRESIVA
+    // Calcular cantidad de pasos (máximo entre Δx y Δy)
+    int dx_total = abs(obj->x_end - obj->x_start);
+    int dy_total = abs(obj->y_end - obj->y_start);
+    int pasos = dx_total > dy_total ? dx_total : dy_total;
+    if (pasos == 0) pasos = 1;
+
+    float dx = (float)(obj->x_end - obj->x_start) / pasos;
+    float dy = (float)(obj->y_end - obj->y_start) / pasos;
+
+    float fx = obj->x_start;
+    float fy = obj->y_start;
+    int prev_x = (int)fx;
+    int prev_y = (int)fy;
+
+    // ROTACIÓN PROGRESIVA
     int rot_start = obj->rotation_start % 360;
     int rot_end   = obj->rotation_end % 360;
     int total_rotation = (rot_end - rot_start + 360) % 360;
@@ -144,11 +161,9 @@ void* animar_objeto(void* arg) {
     int rotaciones_aplicadas = 0;
     int current_rotation = rot_start;
 
-    // Aplicar rotación inicial si es distinta de 0
-    if (current_rotation > 0) {
-        // Reutiliza función rotate_shape_matrix (más abajo la definimos)
-        obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, current_rotation);
-    }
+    if (current_rotation > 0)
+        obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, 90, obj);
+
 
     // ⏳ Esperar hasta time_start
     while (get_current_time_ms() < obj->time_start * 1000) {
@@ -162,7 +177,7 @@ void* animar_objeto(void* arg) {
         if (now > obj->time_end * 1000) {
             printf("🛑 Hilo tid=%d finaliza por time_end\n", current->tid);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: tid=%d superó su tiempo_end\n", current->tid);
+                printf("💥 EXPLOSIÓN: tid=%d no completó su animación a tiempo\n", current->tid);
                 current->finished = true;
                 current->must_cleanup = true;
             }
@@ -174,8 +189,8 @@ void* animar_objeto(void* arg) {
         // 🧹 Borrar figura anterior
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
-                int y = obj->current_y + i;
-                int x = obj->current_x + j;
+                int y = prev_y + i;
+                int x = prev_x + j;
                 if (obj->shape[i][j] != ' ' &&
                     x >= 0 && x < canvas_width &&
                     y >= 0 && y < canvas_height)
@@ -183,21 +198,27 @@ void* animar_objeto(void* arg) {
             }
         }
 
-        // ➕ Aplicar rotación progresiva si corresponde
+        // ➕ Rotación progresiva si toca
         if (num_rotaciones > 0 && p > 0 && p % steps_per_rotation == 0 && rotaciones_aplicadas < num_rotaciones) {
             current_rotation = (current_rotation + 90) % 360;
-            obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, 90);
+            obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, 90, obj);
+
             rotaciones_aplicadas++;
         }
 
         // ➡️ Avanzar
-        obj->current_x += dx;
+        fx += dx;
+        fy += dy;
+        int cur_x = (int)fx;
+        int cur_y = (int)fy;
+        obj->current_x = cur_x;
+        obj->current_y = cur_y;
 
-        // 🎨 Dibujar nueva figura
+        // 🎨 Dibujar figura en nueva posición
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
-                int y = obj->current_y + i;
-                int x = obj->current_x + j;
+                int y = cur_y + i;
+                int x = cur_x + j;
                 if (obj->shape[i][j] != ' ' &&
                     x >= 0 && x < canvas_width &&
                     y >= 0 && y < canvas_height)
@@ -206,10 +227,12 @@ void* animar_objeto(void* arg) {
         }
 
         my_mutex_unlock(&canvas_mutex);
-
         enviar_canvas_a_clientes(canvas);
         usleep(150000);
         my_thread_yield();
+
+        prev_x = cur_x;
+        prev_y = cur_y;
     }
 
     printf("🏁 Hilo tid=%d terminó\n", current->tid);
