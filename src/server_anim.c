@@ -16,6 +16,10 @@
 
 // 🔧 Variables globales
 char canvas[CANVAS_HEIGHT][CANVAS_WIDTH];
+int canvas_owner[CANVAS_HEIGHT][CANVAS_WIDTH]; // 0 = libre, >0 = ID del objeto
+ObjetoAnimado* objetos_activos[MAX_OBJETOS]; // indexado por id - 1
+
+
 my_mutex_t canvas_mutex;
 
 int clients[MAX_MONITORS];
@@ -135,10 +139,86 @@ char** rotate_shape_matrix(char** shape, int* rows, int* cols, int angle, Objeto
     return rotated;
 }
 
+float progreso_objeto(ObjetoAnimado* obj, int x, int y) {
+    float dx_total = abs(obj->x_end - obj->x_start);
+    float dy_total = abs(obj->y_end - obj->y_start);
+    float dist_total = dx_total + dy_total;
+
+    float dx_avance = abs(obj->x_end - x);
+    float dy_avance = abs(obj->y_end - y);
+    float dist_restante = dx_avance + dy_avance;
+
+    return dist_total > 0 ? 1.0f - (dist_restante / dist_total) : 1.0f;
+}
+
+
+bool area_libre_para_objeto(int x, int y, char** shape, int h, int w, ObjetoAnimado* obj) {
+    for (int i = 0; i < h; i++) {
+        for (int j = 0; j < w; j++) {
+            if (shape[i][j] == ' ') continue;
+
+            int cx = x + j;
+            int cy = y + i;
+
+            if (cx < 0 || cx >= canvas_width || cy < 0 || cy >= canvas_height)
+                continue;
+
+            int ocupante = canvas_owner[cy][cx];
+            if (ocupante != 0 && ocupante != obj->id) {
+                ObjetoAnimado* otro = objetos_activos[ocupante - 1];
+                if (!otro) continue;
+
+                float mi_progreso = progreso_objeto(obj, x, y);
+                float su_progreso = progreso_objeto(otro, otro->current_x, otro->current_y);
+
+                if (su_progreso >= mi_progreso) {
+                    return false; // estoy detrás, debo esperar
+                }
+            }
+        }
+    }
+    return true;
+}
+
+
+
+void asignar_area_a_objeto(int x, int y, char** shape, int h, int w, int id) {
+    for (int i = 0; i < h; i++) {
+        for (int j = 0; j < w; j++) {
+            if (shape[i][j] == ' ') continue;
+
+            int cx = x + j;
+            int cy = y + i;
+
+            if (cx < 0 || cx >= canvas_width || cy < 0 || cy >= canvas_height)
+                continue;
+
+            canvas_owner[cy][cx] = id;
+        }
+    }
+}
+
+void limpiar_area_de_objeto(int x, int y, char** shape, int h, int w, int id) {
+    for (int i = 0; i < h; i++) {
+        for (int j = 0; j < w; j++) {
+            if (shape[i][j] == ' ') continue;
+
+            int cx = x + j;
+            int cy = y + i;
+
+            if (cx < 0 || cx >= canvas_width || cy < 0 || cy >= canvas_height)
+                continue;
+
+            if (canvas_owner[cy][cx] == id)
+                canvas_owner[cy][cx] = 0;
+        }
+    }
+}
+
+
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
 
-    // Calcular pasos
     int dx_total = abs(obj->x_end - obj->x_start);
     int dy_total = abs(obj->y_end - obj->y_start);
     int pasos = dx_total > dy_total ? dx_total : dy_total;
@@ -152,7 +232,6 @@ void* animar_objeto(void* arg) {
     int prev_x = (int)fx;
     int prev_y = (int)fy;
 
-    // 🔄 Rotación progresiva
     int rot_start = obj->rotation_start % 360;
     int rot_end   = obj->rotation_end % 360;
     int total_rotation = (rot_end - rot_start + 360) % 360;
@@ -164,15 +243,13 @@ void* animar_objeto(void* arg) {
     if (current_rotation > 0)
         obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, current_rotation, obj);
 
-    // ⏳ Esperar hasta time_start
     while (get_current_time_ms() < obj->time_start * 1000) {
         my_thread_yield();
         usleep(50000);
     }
 
-    for (int p = 0; p <= pasos; p++) {
+    for (int p = 0; p <= pasos; ) {
         long now = get_current_time_ms();
-
         if (now > obj->time_end * 1000) {
             printf("🛑 Hilo tid=%d finaliza por time_end\n", current->tid);
             if (obj->scheduler == SCHED_REALTIME) {
@@ -183,9 +260,21 @@ void* animar_objeto(void* arg) {
             break;
         }
 
+        int cur_x = (int)(fx + dx);
+        int cur_y = (int)(fy + dy);
+
         my_mutex_lock(&canvas_mutex);
 
+        if (!area_libre_para_objeto(cur_x, cur_y, obj->shape, obj->shape_height, obj->shape_width, obj)) {
+            my_mutex_unlock(&canvas_mutex);
+            usleep(80000);
+            my_thread_yield();
+            continue;
+        }
+        
+
         // 🧹 Borrar figura anterior
+        limpiar_area_de_objeto(prev_x, prev_y, obj->shape, obj->shape_height, obj->shape_width, obj->id);
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
                 int y = prev_y + i;
@@ -197,22 +286,20 @@ void* animar_objeto(void* arg) {
             }
         }
 
-        // 🔁 Rotación progresiva si toca
+        // Rotar si toca
         if (num_rotaciones > 0 && p > 0 && p % steps_per_rotation == 0 && rotaciones_aplicadas < num_rotaciones) {
             current_rotation = (current_rotation + 90) % 360;
             obj->shape = rotate_shape_matrix(obj->shape, &obj->shape_height, &obj->shape_width, 90, obj);
             rotaciones_aplicadas++;
         }
 
-        // ➡️ Avanzar
+        // Actualizar posición
         fx += dx;
         fy += dy;
-        int cur_x = (int)fx;
-        int cur_y = (int)fy;
         obj->current_x = cur_x;
         obj->current_y = cur_y;
 
-        // 🎨 Dibujar nueva figura
+        // 🖌️ Dibujar y registrar
         for (int i = 0; i < obj->shape_height; i++) {
             for (int j = 0; j < obj->shape_width; j++) {
                 int y = cur_y + i;
@@ -224,6 +311,8 @@ void* animar_objeto(void* arg) {
             }
         }
 
+        asignar_area_a_objeto(cur_x, cur_y, obj->shape, obj->shape_height, obj->shape_width, obj->id);
+
         my_mutex_unlock(&canvas_mutex);
 
         enviar_canvas_a_clientes(canvas);
@@ -232,10 +321,11 @@ void* animar_objeto(void* arg) {
 
         prev_x = cur_x;
         prev_y = cur_y;
+        p++; // Avanzar solo si se pudo mover
     }
 
-    // 🧹 Borrar figura del canvas al terminar
     my_mutex_lock(&canvas_mutex);
+    limpiar_area_de_objeto(obj->current_x, obj->current_y, obj->shape, obj->shape_height, obj->shape_width, obj->id);
     for (int i = 0; i < obj->shape_height; i++) {
         for (int j = 0; j < obj->shape_width; j++) {
             int y = obj->current_y + i;
@@ -249,7 +339,6 @@ void* animar_objeto(void* arg) {
     my_mutex_unlock(&canvas_mutex);
     enviar_canvas_a_clientes(canvas);
 
-    // 🧼 Liberar memoria
     for (int i = 0; i < obj->shape_height; i++)
         free(obj->shape[i]);
     free(obj->shape);
@@ -262,8 +351,12 @@ void* animar_objeto(void* arg) {
 
 
 
+
+
 int main() {
     
+    memset(canvas_owner, 0, sizeof(canvas_owner));
+
     // Leer configuración
     CanvasConfig config;
     if (read_config("config/animation.ini", &config) != 0) {
@@ -323,6 +416,9 @@ int main() {
         }
         memset(copia, 0, sizeof(ObjetoAnimado));
         *copia = objetos[i];
+        copia->id = i + 1;
+        objetos_activos[copia->id - 1] = copia;
+
 
         copia->shape = malloc(sizeof(char*) * copia->shape_height);
         if (!copia->shape) {

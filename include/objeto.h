@@ -23,6 +23,7 @@ typedef struct {
     long time_start;
     long time_end;
     long deadline;
+    int id;
 } ObjetoAnimado;
 
 #endif
