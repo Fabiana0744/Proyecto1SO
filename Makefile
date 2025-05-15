@@ -9,7 +9,9 @@ SRCS_SERVER = src/server_anim.c src/parser_config.c src/parser_objetos.c \
               src/scheduler_rr.c src/scheduler_lottery.c src/scheduler_realtime.c \
               external/inih/ini.c
 
-SRCS_CLIENT = src/client_anim.c
+SRCS_CLIENT = src/client_anim.c src/mypthreads.c \
+              src/scheduler.c src/scheduler_rr.c src/scheduler_lottery.c src/scheduler_realtime.c
+
 
 # Objetivos
 server_anim: $(SRCS_SERVER) $(SRCS_COMMON)

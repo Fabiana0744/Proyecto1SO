@@ -46,6 +46,8 @@ int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
     int tickets, long time_start, long time_end, long deadline);
 
 
+// util.h
+void busy_wait_ms(int ms);
 
 
 

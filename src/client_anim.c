@@ -1,6 +1,7 @@
 #include "net.h"
 #include <stdio.h>
 #include <unistd.h>
+#include "mypthreads.h"
 
 #define SERVER_IP "127.0.0.1"
 #define PORT 5000
@@ -33,7 +34,7 @@ int main() {
             putchar('\n');
         }
     
-        usleep(50000); // ~20 FPS
+        busy_wait_ms(50);
     }
     
 

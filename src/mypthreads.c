@@ -31,6 +31,13 @@ long get_current_time_ms() {
     return now - program_start_ms;
 }
 
+void busy_wait_ms(int ms) {
+    long start = get_current_time_ms();
+    while ((get_current_time_ms() - start) < ms);
+}
+
+
+
 
 static void enqueue(tcb* thread) {
     thread->next = NULL;

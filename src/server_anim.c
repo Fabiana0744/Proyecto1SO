@@ -245,7 +245,7 @@ void* animar_objeto(void* arg) {
 
     while (get_current_time_ms() < obj->time_start * 1000) {
         my_thread_yield();
-        usleep(50000);
+        busy_wait_ms(50);
     }
 
     for (int p = 0; p <= pasos; ) {
@@ -267,7 +267,7 @@ void* animar_objeto(void* arg) {
 
         if (!area_libre_para_objeto(cur_x, cur_y, obj->shape, obj->shape_height, obj->shape_width, obj)) {
             my_mutex_unlock(&canvas_mutex);
-            usleep(80000);
+            busy_wait_ms(80); 
             my_thread_yield();
             continue;
         }
@@ -316,7 +316,7 @@ void* animar_objeto(void* arg) {
         my_mutex_unlock(&canvas_mutex);
 
         enviar_canvas_a_clientes(canvas);
-        usleep(150000);
+        busy_wait_ms(150); 
         my_thread_yield();
 
         prev_x = cur_x;
@@ -468,7 +468,7 @@ int main() {
     scheduler_run();
 
     while (1) {
-        usleep(100000);
+        busy_wait_ms(100); 
     }
 
     close(server_fd);
