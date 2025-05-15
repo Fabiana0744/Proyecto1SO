@@ -161,6 +161,50 @@ void limpiar_area_de_objeto(int x, int y, ShapeMatrix* shape, int id) {
 }
 
 
+void esperar_inicio_animacion(ObjetoAnimado* obj) {
+    long inicio_ms = obj->time_start * 1000;
+    while (get_current_time_ms() < inicio_ms) {
+        my_thread_yield();
+        busy_wait_ms(50);
+    }
+}
+
+
+void borrar_figura_anterior(int x, int y, ShapeMatrix* shape) {
+    for (int i = 0; i < shape->rows; i++) {
+        for (int j = 0; j < shape->cols; j++) {
+            int cy = y + i;
+            int cx = x + j;
+            if (shape->data[i][j] != ' ' &&
+                cx >= 0 && cx < canvas_width &&
+                cy >= 0 && cy < canvas_height) {
+                canvas[cy][cx] = '.';
+            }
+        }
+    }
+}
+
+void dibujar_figura_actual(int x, int y, ShapeMatrix* shape) {
+    for (int i = 0; i < shape->rows; i++) {
+        for (int j = 0; j < shape->cols; j++) {
+            int cy = y + i;
+            int cx = x + j;
+            if (shape->data[i][j] != ' ' &&
+                cx >= 0 && cx < canvas_width &&
+                cy >= 0 && cy < canvas_height) {
+                canvas[cy][cx] = shape->data[i][j];
+            }
+        }
+    }
+}
+
+void borrar_figura_final(ObjetoAnimado* obj) {
+    limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
+    borrar_figura_anterior(obj->current_x, obj->current_y, &obj->shape);
+}
+
+
+
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
 
@@ -188,10 +232,7 @@ void* animar_objeto(void* arg) {
     if (current_rotation > 0)
         rotate_shape_matrix(&obj->shape, current_rotation);
 
-    while (get_current_time_ms() < obj->time_start * 1000) {
-        my_thread_yield();
-        busy_wait_ms(50);
-    }
+    esperar_inicio_animacion(obj);  
 
     for (int p = 0; p <= pasos; ) {
         long now = get_current_time_ms();
@@ -224,16 +265,8 @@ void* animar_objeto(void* arg) {
         }
 
         // 🧹 Borrar figura anterior
-        for (int i = 0; i < obj->shape.rows; i++) {
-            for (int j = 0; j < obj->shape.cols; j++) {
-                int y = prev_y + i;
-                int x = prev_x + j;
-                if (obj->shape.data[i][j] != ' ' &&
-                    x >= 0 && x < canvas_width &&
-                    y >= 0 && y < canvas_height)
-                    canvas[y][x] = '.';
-            }
-        }
+        borrar_figura_anterior(prev_x, prev_y, &obj->shape);
+
 
         // 🔁 Intentar rotación si corresponde
         if (num_rotaciones > 0 && p > 0 && p % steps_per_rotation == 0 && rotaciones_aplicadas < num_rotaciones) {
@@ -274,16 +307,8 @@ void* animar_objeto(void* arg) {
         obj->current_y = cur_y;
 
         // 🖌️ Dibujar figura
-        for (int i = 0; i < obj->shape.rows; i++) {
-            for (int j = 0; j < obj->shape.cols; j++) {
-                int y = cur_y + i;
-                int x = cur_x + j;
-                if (obj->shape.data[i][j] != ' ' &&
-                    x >= 0 && x < canvas_width &&
-                    y >= 0 && y < canvas_height)
-                    canvas[y][x] = obj->shape.data[i][j];
-            }
-        }
+        dibujar_figura_actual(cur_x, cur_y, &obj->shape);
+
 
         // 🧱 Registrar ocupación
         asignar_area_a_objeto(cur_x, cur_y, &obj->shape, obj->id);
@@ -301,19 +326,10 @@ void* animar_objeto(void* arg) {
 
     // 🧹 Limpieza final
     my_mutex_lock(&canvas_mutex);
-    limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
-    for (int i = 0; i < obj->shape.rows; i++) {
-        for (int j = 0; j < obj->shape.cols; j++) {
-            int y = obj->current_y + i;
-            int x = obj->current_x + j;
-            if (obj->shape.data[i][j] != ' ' &&
-                x >= 0 && x < canvas_width &&
-                y >= 0 && y < canvas_height)
-                canvas[y][x] = '.';
-        }
-    }
+    borrar_figura_final(obj);
     my_mutex_unlock(&canvas_mutex);
-    enviar_canvas_a_clientes(canvas);
+
+        enviar_canvas_a_clientes(canvas);
 
     free(obj);
     my_thread_end(NULL);
