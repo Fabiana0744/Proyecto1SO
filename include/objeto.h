@@ -2,11 +2,18 @@
 #define OBJETO_H
 #include "scheduler.h"
 
+#define MAX_SHAPE_ROWS 20
+#define MAX_SHAPE_COLS 20
+
+typedef struct {
+    char data[MAX_SHAPE_ROWS][MAX_SHAPE_COLS];
+    int rows;  // Altura actual (activa)
+    int cols;  // Anchura actual (activa)
+} ShapeMatrix;
+
+
 typedef struct {
     char name[32];
-    char** shape;
-    int shape_width;
-    int shape_height;
 
     int x_start, y_start;
     int x_end, y_end;
@@ -24,6 +31,9 @@ typedef struct {
     long time_end;
     long deadline;
     int id;
+
+    ShapeMatrix shape;
+
 } ObjetoAnimado;
 
 #endif

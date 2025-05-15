@@ -30,12 +30,16 @@ static int handler(void* user, const char* section, const char* name, const char
             }
             fclose(f);
 
-            current_obj->shape_height = h;
-            current_obj->shape_width = w;
-            current_obj->shape = malloc(h * sizeof(char*));
+            current_obj->shape.rows = h;
+            current_obj->shape.cols = w;
             for (int i = 0; i < h; i++) {
-                current_obj->shape[i] = strdup(buffer[i]);
+                int len = strlen(buffer[i]);
+                for (int j = 0; j < w; j++) {
+                    current_obj->shape.data[i][j] = (j < len) ? buffer[i][j] : ' ';
+                }
             }
+
+
         } else if (strcmp(name, "x_start") == 0) current_obj->x_start = atoi(value);
         else if (strcmp(name, "y_start") == 0) current_obj->y_start = atoi(value);
         else if (strcmp(name, "x_end") == 0) current_obj->x_end = atoi(value);

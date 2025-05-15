@@ -118,15 +118,23 @@ bool area_libre_para_objeto(int x, int y, ShapeMatrix* shape, ObjetoAnimado* obj
                 continue;
 
             int ocupante = canvas_owner[cy][cx];
+
             if (ocupante != 0 && ocupante != obj->id) {
-                // NO permitir paso sobre otro objeto
-                return false;
+                ObjetoAnimado* otro = objetos_activos[ocupante - 1];
+                if (!otro) continue;
+
+                float mi_progreso = progreso_objeto(obj, x, y);
+                float su_progreso = progreso_objeto(otro, otro->current_x, otro->current_y);
+
+                // ⚠️ NO permitimos avanzar si el otro no va más atrás completamente
+                if (su_progreso >= mi_progreso - 0.05f) {
+                    return false;
+                }
             }
         }
     }
     return true;
 }
-
 
 
 void asignar_area_a_objeto(int x, int y, ShapeMatrix* shape, int id) {
@@ -242,6 +250,30 @@ void liberar_shape(char** shape, int h) {
 }
 
 
+void agregar_borde_a_shape(ShapeMatrix* s, int borde) {
+    ShapeMatrix original = *s;
+
+    int new_rows = original.rows + 2 * borde;
+    int new_cols = original.cols + 2 * borde;
+
+    ShapeMatrix nueva = { .rows = new_rows, .cols = new_cols };
+
+    // Rellenar todo con espacios
+    for (int i = 0; i < new_rows; i++)
+        for (int j = 0; j < new_cols; j++)
+            nueva.data[i][j] = ' ';
+
+    // Copiar figura original en el centro
+    for (int i = 0; i < original.rows; i++) {
+        for (int j = 0; j < original.cols; j++) {
+            nueva.data[i + borde][j + borde] = original.data[i][j];
+        }
+    }
+
+    *s = nueva;
+}
+
+
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
 
@@ -299,7 +331,7 @@ void* animar_objeto(void* arg) {
             // 🚫 No puede avanzar, recuperar área y esperar
             asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
             my_mutex_unlock(&canvas_mutex);
-            busy_wait_ms(100);
+            busy_wait_ms(80);
             my_thread_yield();
             continue;
         }
@@ -471,6 +503,9 @@ int main() {
 
 
         copia->shape = objetos[i].shape;  
+
+        agregar_borde_a_shape(&copia->shape, 1);
+
 
         printf("📦 Objeto %d copiado: y_start=%d x_start=%d primera fila='%.*s'\n",
        i, copia->y_start, copia->x_start,
