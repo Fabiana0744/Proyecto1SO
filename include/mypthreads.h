@@ -35,6 +35,9 @@ typedef struct my_thread_control_block {
 
     scheduler_type_t sched_type;  // nuevo campo para saber qué tipo usa cada hilo
 
+    long last_start_ms;     /* → instante en que tomó la CPU           */
+    long consumed_ms;       /* → ms gastados dentro del quantum actual */
+
 } tcb;
 
 int my_thread_create(my_thread_t* thread,
