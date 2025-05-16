@@ -31,7 +31,6 @@ typedef struct {
     long time_end;
     long deadline;
     int id;
-
     ShapeMatrix shape;
 
 } ObjetoAnimado;

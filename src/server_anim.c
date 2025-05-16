@@ -203,138 +203,155 @@ void borrar_figura_final(ObjetoAnimado* obj) {
     borrar_figura_anterior(obj->current_x, obj->current_y, &obj->shape);
 }
 
+/* Pequeño helper: duerme (busy-wait) y cede CPU al final */
+static void my_thread_sleep_ms(long ms)
+{
+    busy_wait_ms(ms);     /* quema el tiempo */
+    my_thread_yield();    /* cede al planificador */
+}
 
+/* --------------------------------------------------------------------
+ *  animar_objeto — versión con velocidad fija e independiente
+ * ------------------------------------------------------------------*/
 
-void* animar_objeto(void* arg) {
-    ObjetoAnimado* obj = (ObjetoAnimado*) arg;
+void* animar_objeto(void* arg)
+{
+    ObjetoAnimado* obj = (ObjetoAnimado*)arg;
 
+    /* 1. Pasos totales (uno por celda en la dirección dominante) */
     int dx_total = abs(obj->x_end - obj->x_start);
     int dy_total = abs(obj->y_end - obj->y_start);
-    int pasos = dx_total > dy_total ? dx_total : dy_total;
+    int pasos    = (dx_total > dy_total) ? dx_total : dy_total;
     if (pasos == 0) pasos = 1;
 
     float dx = (float)(obj->x_end - obj->x_start) / pasos;
     float dy = (float)(obj->y_end - obj->y_start) / pasos;
 
+    /* 2. Periodo fijo por tick (ms) */
+    long ventana_ms = (long)(obj->time_end - obj->time_start) * 1000L;
+    if (ventana_ms <= 0) ventana_ms = 1;
+    long periodo_ms = ventana_ms / pasos;
+    if (periodo_ms < 1) periodo_ms = 1;          /* mínimo 1 ms */
+
+    /* 3. Reloj absoluto del próximo tick */
+    long next_tick_ms = obj->time_start * 1000L; /* comienza exactamente en time_start */
+
+    /* 4. Posición flotante y previa */
     float fx = obj->x_start;
     float fy = obj->y_start;
-    int prev_x = (int)fx;
-    int prev_y = (int)fy;
+    int   prev_x = (int)fx;
+    int   prev_y = (int)fy;
 
-    int rot_start = obj->rotation_start % 360;
-    int rot_end   = obj->rotation_end % 360;
-    int total_rotation = (rot_end - rot_start + 360) % 360;
-    int num_rotaciones = total_rotation / 90;
-    int steps_per_rotation = (num_rotaciones > 0) ? pasos / num_rotaciones : pasos + 1;
-    int rotaciones_aplicadas = 0;
-    int current_rotation = rot_start;
+    /* 5. Rotación por bloques de 90° */
+    int total_rot = ( (obj->rotation_end - obj->rotation_start) % 360 + 360 ) % 360;
+    int n_rots    = total_rot / 90;
+    int steps_per_rot = (n_rots > 0) ? pasos / n_rots : pasos + 1;
+    int rots_done = 0;
+    if (obj->rotation_start % 360)
+        rotate_shape_matrix(&obj->shape, obj->rotation_start % 360);
 
-    if (current_rotation > 0)
-        rotate_shape_matrix(&obj->shape, current_rotation);
+    /* 6. Esperar hasta time_start */
+    esperar_inicio_animacion(obj);
 
-    esperar_inicio_animacion(obj);  
+    /* 7. Bucle principal */
+    for (int p = 0; p < pasos; ) {
 
-    for (int p = 0; p <= pasos; ) {
-        long now = get_current_time_ms();
-        if (now > obj->time_end * 1000) {
-            printf("🛑 Hilo tid=%d finaliza por time_end\n", current->tid);
+        long now_ms = get_current_time_ms();
+
+        /* 7.1  Explosión si fuera de la ventana */
+        if (now_ms > obj->time_end * 1000L) {
+            printf("💥 Obj %d EXPLOTA: fuera de tiempo\n", obj->id);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: tid=%d no completó su animación a tiempo\n", current->tid);
-                current->finished = true;
+                current->finished     = true;
                 current->must_cleanup = true;
             }
             break;
         }
 
-        int cur_x = (int)(fx + dx);
-        int cur_y = (int)(fy + dy);
-
-        my_mutex_lock(&canvas_mutex);
-
-        // 🔄 Liberar área actual para evitar auto-colisión
-        limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
-
-        // ✅ Verificar colisión en nueva posición
-        if (!area_libre_para_objeto(cur_x, cur_y, &obj->shape, obj)) {
-            // 🚫 No puede avanzar, recuperar área y esperar
-            asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
-            my_mutex_unlock(&canvas_mutex);
-            busy_wait_ms(100);
+        /* 7.2  Esperar al tick exacto */
+        long wait_ms = next_tick_ms - now_ms;
+        if (wait_ms > 0) {           /* aún no toca — espera y vuelve */
+            busy_wait_ms(wait_ms);
             my_thread_yield();
             continue;
         }
 
-        // 🧹 Borrar figura anterior
-        borrar_figura_anterior(prev_x, prev_y, &obj->shape);
+        /* 7.3  Intentar avanzar un paso */
+        int cur_x = (int)(fx + dx);
+        int cur_y = (int)(fy + dy);
 
+        my_mutex_lock(&canvas_mutex);
+        limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
 
-        // 🔁 Intentar rotación si corresponde
-        if (num_rotaciones > 0 && p > 0 && p % steps_per_rotation == 0 && rotaciones_aplicadas < num_rotaciones) {
-            ShapeMatrix copia = obj->shape;
-            rotate_shape_matrix(&copia, 90);
-
-            int cx_old = obj->shape.cols / 2;
-            int cy_old = obj->shape.rows / 2;
-            int cx_new = copia.cols / 2;
-            int cy_new = copia.rows / 2;
-            int delta_x = cx_old - cx_new;
-            int delta_y = cy_old - cy_new;
-
-            int new_x = obj->current_x + delta_x;
-            int new_y = obj->current_y + delta_y;
-
-            // 🔄 Verificar colisión para rotación
-            if (!area_libre_para_objeto(new_x, new_y, &copia, obj)) {
-                // ❌ Restaurar área y posponer
-                asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
-                my_mutex_unlock(&canvas_mutex);
-                busy_wait_ms(50);
-                my_thread_yield();
-                continue;
-            }
-
-            obj->shape = copia;
-            obj->current_x = new_x;
-            obj->current_y = new_y;
-            rotaciones_aplicadas++;
-            current_rotation = (current_rotation + 90) % 360;
+        if (!area_libre_para_objeto(cur_x, cur_y, &obj->shape, obj)) {
+            /* Cede paso: tick perdido */
+            asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
+            my_mutex_unlock(&canvas_mutex);
+            busy_wait_ms(50);
+            my_thread_yield();
+            next_tick_ms += periodo_ms;   /* consume el tick */
+            continue;
         }
 
-        // ✅ Avanzar posición
+        /* 7.4  Borrar figura previa y rotar si corresponde */
+        borrar_figura_anterior(prev_x, prev_y, &obj->shape);
+
+        if (n_rots && (p + 1) % steps_per_rot == 0 && rots_done < n_rots) {
+            ShapeMatrix rot = obj->shape;
+            rotate_shape_matrix(&rot, 90);
+
+            /* Ajuste para mantener centro aproximado */
+            int dx_c = (obj->shape.cols - rot.cols) / 2;
+            int dy_c = (obj->shape.rows - rot.rows) / 2;
+            int rx = cur_x + dx_c;
+            int ry = cur_y + dy_c;
+
+            if (area_libre_para_objeto(rx, ry, &rot, obj)) {
+                obj->shape = rot;
+                cur_x = rx;
+                cur_y = ry;
+                rots_done++;
+            }
+        }
+
+        /* 7.5  Avanzar posición */
         fx += dx;
         fy += dy;
         obj->current_x = cur_x;
         obj->current_y = cur_y;
 
-        // 🖌️ Dibujar figura
+        /* 7.6  Dibujar y registrar ocupación */
         dibujar_figura_actual(cur_x, cur_y, &obj->shape);
-
-
-        // 🧱 Registrar ocupación
         asignar_area_a_objeto(cur_x, cur_y, &obj->shape, obj->id);
 
         my_mutex_unlock(&canvas_mutex);
-
         enviar_canvas_a_clientes(canvas);
-        busy_wait_ms(150);
-        my_thread_yield();
 
+        /* 7.7  Preparar siguiente estado */
         prev_x = cur_x;
         prev_y = cur_y;
         p++;
+        next_tick_ms += periodo_ms;          /* avanza el metrónomo */
+        my_thread_yield();
     }
 
-    // 🧹 Limpieza final
+    /* 8. Fin de animación o explosión */
+    printf("🔚 Obj %d (tid=%d) terminó en (%d,%d)\n",
+           obj->id, current->tid, obj->current_x, obj->current_y);
+
     my_mutex_lock(&canvas_mutex);
     borrar_figura_final(obj);
     my_mutex_unlock(&canvas_mutex);
-
-        enviar_canvas_a_clientes(canvas);
+    enviar_canvas_a_clientes(canvas);
 
     free(obj);
     my_thread_end(NULL);
     return NULL;
 }
+
+
+
+
 
 
 
@@ -359,9 +376,14 @@ int main() {
     printf("📦 Objetos cargados (%d):\n", total_objetos);
     for (int i = 0; i < total_objetos; i++) {
         ObjetoAnimado* o = &objetos[i];
-        printf("🔸 Obj %d: (%d,%d) → (%d,%d) | Sched=%d | Tck=%d | ⏱️ %ld→%ld | D=%ld\n",
+        printf("🔸 Obj %d: (%d,%d) → (%d,%d) | Sched=%d | Tck=%d | ⏱️ %ld→%ld | Vent=%lds | D=%ld\n",
             i, o->x_start, o->y_start, o->x_end, o->y_end,
-            o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
+               o->scheduler, o->tickets,
+               o->time_start, o->time_end,
++              (o->time_end - o->time_start),
+                                    
+               o->deadline);
+            
     }
     init_timer();  // ⏱️ iniciar contador relativo desde 0
 
