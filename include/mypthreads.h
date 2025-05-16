@@ -37,7 +37,15 @@ typedef struct my_thread_control_block {
 
 } tcb;
 
-int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* arg);
+int my_thread_create(my_thread_t* thread,
+    void* (*start_routine)(void*),
+    void* arg,
+    scheduler_type_t sched,
+    int tickets,
+    long time_start,
+    long time_end,
+    long deadline);
+
 void my_thread_end(void* retval);
 int my_thread_yield(void);
 int my_thread_join(my_thread_t thread, void** retval);

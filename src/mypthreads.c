@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
 #include "scheduler.h"
+#include <stdio.h>  // Para fprintf
 
 #define MAX_THREADS 128
 
@@ -37,8 +38,6 @@ void busy_wait_ms(int ms) {
 }
 
 
-
-
 static void enqueue(tcb* thread) {
     thread->next = NULL;
     if (!ready_queue) {
@@ -57,7 +56,15 @@ static tcb* dequeue() {
     return t;
 }
 
-int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* arg) {
+
+int my_thread_create(my_thread_t* thread,
+                     void* (*start_routine)(void*),
+                     void* arg,
+                     scheduler_type_t sched,
+                     int tickets,
+                     long time_start,
+                     long time_end,
+                     long deadline) {
     tcb* new_thread = malloc(sizeof(tcb));
     if (!new_thread) return -1;
 
@@ -77,14 +84,42 @@ int my_thread_create(my_thread_t* thread, void* (*start_routine)(void*), void* a
     new_thread->retval = NULL;
     new_thread->waiting_for_me = NULL;
     new_thread->next = NULL;
+    new_thread->must_cleanup = false;
+    new_thread->finished = false;
+
+    new_thread->sched_type = sched;
+
+    // ⏱️ Todos los hilos tienen restricciones de tiempo
+    new_thread->time_start = time_start;
+    new_thread->time_end = time_end;
+
+    // ⚙️ Configurar según scheduler
+    switch (sched) {
+        case SCHED_RR:
+            break;
+        case SCHED_LOTTERY:
+            new_thread->tickets = (tickets > 0) ? tickets : 1;
+            break;
+        case SCHED_REALTIME:
+            new_thread->deadline = deadline;
+            break;
+        default:
+            fprintf(stderr, "[ERROR] Tipo de scheduler desconocido: %d\n", sched);
+            free(new_thread->context.uc_stack.ss_sp);
+            free(new_thread);
+            return -1;
+    }
 
     *thread = new_thread->tid;
     all_threads[new_thread->tid] = new_thread;
 
     makecontext(&new_thread->context, (void (*)())start_routine, 1, arg);
-    //scheduler_add(new_thread);  // esto encola en el scheduler activo
+
+    scheduler_add(new_thread);
     return 0;
 }
+
+
 
 int my_thread_yield(void) {
     scheduler_yield();  // ✅ Aquí se respeta el tipo de scheduler del hilo actual
@@ -188,9 +223,6 @@ int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
 }
 
 
-
-#include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
-
 int my_mutex_init(my_mutex_t* mutex) {
     if (!mutex) return -1;
     mutex->locked = 0;
@@ -198,7 +230,6 @@ int my_mutex_init(my_mutex_t* mutex) {
     return 0;
 }
 
-#include <stdio.h>  // Para fprintf
 
 int my_mutex_lock(my_mutex_t* mutex) {
     // Validación de puntero nulo

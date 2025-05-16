@@ -411,29 +411,24 @@ int main() {
        i, copia->y_start, copia->x_start,
        copia->shape.cols, copia->shape.data[0]);
 
-        my_thread_t t;
-        int res = my_thread_create(&t, animar_objeto, copia);
-        if (res != 0) {
-            printf("❌ Error creando hilo para objeto %d\n", i);
-            free(copia);
-            continue;
-        }
+       my_thread_t t;
+       int res = my_thread_create(&t,
+           animar_objeto,
+           copia,
+           copia->scheduler,
+           copia->tickets,
+           copia->time_start,
+           copia->time_end,
+           copia->deadline);
        
-
-        printf("✅ Hilo creado para objeto %d (tid = %d)\n", i, t);
-
-        int sched = my_thread_chsched(t,
-            copia->scheduler,
-            copia->tickets,
-            copia->time_start,
-            copia->time_end,
-            copia->deadline
-        );
-
-        if (sched != 0) {
-            printf("⚠️  Error asignando scheduler a objeto %d\n", i);
-        }
-    }
+       if (res != 0) {
+           printf("❌ Error creando hilo para objeto %d\n", i);
+           free(copia);
+           continue;
+       }
+       
+       printf("✅ Hilo creado para objeto %d (tid = %d)\n", i, t);
+    }       
 
     // Ejecutar scheduler mixto
     scheduler_run();
