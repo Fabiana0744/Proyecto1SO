@@ -218,7 +218,7 @@ int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
     return -1;
     }
 
-    scheduler_add(target);  // aquí ya sabemos su tipo
+    //scheduler_add(target);  // aquí ya sabemos su tipo
     return 0;
 }
 
