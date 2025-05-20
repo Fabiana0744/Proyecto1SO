@@ -7,7 +7,7 @@ extern ucontext_t main_context;
 extern tcb* current;
 
 /* scheduler_rr.c */
-#define RR_QUANTUM_MS  2000        /* ⇦  ajuste fácil */
+#define RR_QUANTUM_MS  200        /* ⇦  ajuste fácil */
 
 
 void rr_init() {

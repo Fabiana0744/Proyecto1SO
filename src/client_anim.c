@@ -2,42 +2,44 @@
 #include <stdio.h>
 #include <unistd.h>
 #include "mypthreads.h"
+#include <signal.h>
 
 #define SERVER_IP "127.0.0.1"
 #define PORT 5000
 
-int main() {
-    int sock = connect_to_server(SERVER_IP, PORT);
+void run_client(const char* host, int port)
+{
+
+    int sock = connect_to_server(host, port);
     if (sock < 0) {
         perror("No se pudo conectar al servidor");
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    printf("🕓 Esperando canvas del servidor...\n");
+    printf("📡 Conectado a %s:%d – esperando canvas…\n", host, port);
 
-    while (1) {
+    while (running) {
         NetPacket pkt;
-        if (recv_packet(sock, &pkt) <= 0) {
-            perror("recv_packet");
-            printf("❌ Error recibiendo paquete (¿servidor cerró?)\n");
+        int n = recv_packet(sock, &pkt);
+        if (n <= 0) {
+            if (running)   /* si no fue Ctrl-C */
+                perror("recv_packet");
             break;
         }
-    
-        // Limpiar pantalla antes de mostrar
-        printf("\033[H\033[J"); // ANSI clear screen
-    
-        printf("📺 Canvas recibido (%dx%d) en posición (%d, %d):\n", pkt.width, pkt.height, pkt.x, pkt.y);
-        for (int i = 0; i < pkt.height; i++) {
-            for (int j = 0; j < pkt.width; j++) {
-                putchar(pkt.data[i][j]);
-            }
+
+        /* clear-screen ANSI */
+        printf("\033[H\033[J");
+        fflush(stdout);
+
+        /* mostrar franja */
+        for (int r = 0; r < pkt.height; ++r) {
+            fwrite(pkt.data[r], 1, pkt.width, stdout);
             putchar('\n');
         }
-    
-        busy_wait_ms(50);
+
+        busy_wait_ms(50);          /* limitador de FPS */
     }
-    
 
     close(sock);
-    return 0;
+    printf("🔌 Cliente cerrado.\n");
 }

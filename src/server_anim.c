@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define PORT 5000
 #define MAX_MONITORS 10
@@ -336,107 +337,107 @@ void* animar_objeto(void* arg) {
     return NULL;
 }
 
+static volatile sig_atomic_t running = 1;
 
 
-int main() {
-    
+void run_server(const char* cfg)
+{
     memset(canvas_owner, 0, sizeof(canvas_owner));
 
-    // Leer configuración
+    /* 1. Leer configuración global (canvas + monitores) */
     CanvasConfig config;
-    if (read_config("config/animation.ini", &config) != 0) {
-        printf("❌ No se pudo leer config/animation.ini\n");
-        return 1;
+    if (read_config(cfg, &config) != 0) {
+        fprintf(stderr, "❌ No se pudo leer %s\n", cfg);
+        exit(EXIT_FAILURE);
     }
 
+    /* 2. Leer objetos desde el mismo .ini */
     ObjetoAnimado objetos[MAX_OBJETOS];
     int total_objetos = 0;
-    if (cargar_objetos_desde_ini("config/animation.ini", objetos, &total_objetos) < 0) {
-        printf("❌ Error cargando objetos desde el .ini\n");
-        return 1;
+    if (cargar_objetos_desde_ini(cfg, objetos, &total_objetos) < 0) {
+        fprintf(stderr, "❌ Error cargando objetos desde %s\n", cfg);
+        exit(EXIT_FAILURE);
     }
 
     printf("📦 Objetos cargados (%d):\n", total_objetos);
     for (int i = 0; i < total_objetos; i++) {
         ObjetoAnimado* o = &objetos[i];
         printf("🔸 Obj %d: (%d,%d) → (%d,%d) | Sched=%d | Tck=%d | ⏱️ %ld→%ld | D=%ld\n",
-            i, o->x_start, o->y_start, o->x_end, o->y_end,
-            o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
+               i, o->x_start, o->y_start, o->x_end, o->y_end,
+               o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
     }
-    init_timer();  // ⏱️ iniciar contador relativo desde 0
 
-    canvas_width = config.width;
+    /* 3. Inicializar temporizador base */
+    init_timer();
+
+    canvas_width  = config.width;
     canvas_height = config.height;
-    num_monitors = config.num_monitors;
+    num_monitors  = config.num_monitors;
 
-    // Inicializar canvas
-    for (int i = 0; i < canvas_height; i++)
-        memset(canvas[i], '.', canvas_width);
+    /* 4. Canvas inicial (relleno con puntos) */
+    for (int r = 0; r < canvas_height; r++)
+        memset(canvas[r], '.', canvas_width);
 
-    // Inicializar mutex
+    /* 5. Mutex global del canvas */
     my_mutex_init(&canvas_mutex);
-    printf("✅ canvas_mutex inicializado en: %p\n", (void*)&canvas_mutex);
 
-    // Iniciar sockets
+    /* 6. Socket de escucha */
     int server_fd = create_server_socket(PORT);
 
-    printf("🖼️ Canvas: %dx%d | Monitores: %d | Objetos: %d\n", canvas_width, canvas_height, num_monitors, total_objetos);
+    printf("🖼️ Canvas: %dx%d | Monitores esperados: %d\n",
+           canvas_width, canvas_height, num_monitors);
     printf("🔌 Esperando %d monitores...\n", num_monitors);
+
     for (int i = 0; i < num_monitors; i++) {
         clients[i] = accept_client(server_fd);
         printf("✅ Monitor %d conectado.\n", i);
     }
 
-    // Inicializar todos los schedulers
+    /* 7. Inicializar schedulers y crear los hilos-objeto */
     scheduler_init();
 
-    // Crear hilos para cada objeto
     for (int i = 0; i < total_objetos; i++) {
-        printf("🔄 Creando hilo para objeto %d...\n", i);
-
         ObjetoAnimado* copia = malloc(sizeof(ObjetoAnimado));
         if (!copia) {
-            printf("❌ Error al reservar memoria para objeto %d\n", i);
+            fprintf(stderr, "❌ Memoria insuficiente para objeto %d\n", i);
             continue;
         }
-        memset(copia, 0, sizeof(ObjetoAnimado));
-        *copia = objetos[i];
+        *copia = objetos[i];          /* copia profunda de la struct */
         copia->id = i + 1;
         objetos_activos[copia->id - 1] = copia;
 
-
-        copia->shape = objetos[i].shape;  
-
-        printf("📦 Objeto %d copiado: y_start=%d x_start=%d primera fila='%.*s'\n",
-       i, copia->y_start, copia->x_start,
-       copia->shape.cols, copia->shape.data[0]);
-
-       my_thread_t t;
-       int res = my_thread_create(&t,
-           animar_objeto,
-           copia,
-           copia->scheduler,
-           copia->tickets,
-           copia->time_start,
-           copia->time_end,
-           copia->deadline);
-       
-       if (res != 0) {
-           printf("❌ Error creando hilo para objeto %d\n", i);
-           free(copia);
-           continue;
-       }
-       
-       printf("✅ Hilo creado para objeto %d (tid = %d)\n", i, t);
-    }       
-
-    // Ejecutar scheduler mixto
-    scheduler_run();
-
-    while (1) {
-        busy_wait_ms(100); 
+        my_thread_t tid;
+        int rc = my_thread_create(&tid,
+                                  animar_objeto,
+                                  copia,
+                                  copia->scheduler,
+                                  copia->tickets,
+                                  copia->time_start,
+                                  copia->time_end,
+                                  copia->deadline);
+        if (rc != 0) {
+            fprintf(stderr, "❌ Error creando hilo para objeto %d\n", i);
+            free(copia);
+            continue;
+        }
+        printf("✅ Hilo creado para objeto %d (tid=%d)\n", i, tid);
     }
 
+    /* 8. Arrancar el scheduler mixto */
+    scheduler_run();
+
+    /* 9. Bucle principal: mantiene vivo el proceso hasta Ctrl-C */
+    while (running) {
+        busy_wait_ms(100);
+    }
+
+    /* 10. Cierre ordenado: sockets de clientes y servidor */
+    printf("\n🔻 Cerrando servidor...\n");
+    for (int i = 0; i < num_monitors; i++)
+        if (clients[i] > 0) close(clients[i]);
     close(server_fd);
-    return 0;
+
+    /* (Opcional) Liberar recursos adicionales aquí */
+
+    return;
 }
