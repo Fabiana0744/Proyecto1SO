@@ -7,6 +7,8 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 5000
 
+static volatile sig_atomic_t running = 1;
+
 void run_client(const char* host, int port)
 {
 
