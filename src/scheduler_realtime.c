@@ -3,16 +3,19 @@
 #include <stdlib.h>
 #include <ucontext.h>
 #include <limits.h>
-
 #include <sys/time.h>
 #include <stdbool.h>
 
 static tcb* realtime_queue = NULL;
+
 extern ucontext_t main_context;
 extern tcb* current;
 extern long get_current_time_ms();
 
-// Inserta un hilo en la cola EDF ordenado por deadline
+void realtime_init(void) {
+    realtime_queue = NULL;
+}
+
 static void enqueue_edf(tcb* thread) {
     thread->next = NULL;
 
@@ -34,56 +37,82 @@ static void enqueue_edf(tcb* thread) {
     thread->next = curr;
 }
 
-static tcb* dequeue_next_ready(void) {
-    tcb* prev = NULL;
-    tcb* curr = realtime_queue;
-
-    while (curr) {
-        if (curr->state == READY) {
-            if (prev) prev->next = curr->next;
-            else realtime_queue = curr->next;
-            curr->next = NULL;
-            return curr;
-        }
-        prev = curr;
-        curr = curr->next;
-    }
-
-    return NULL;
-}
-
-void realtime_init(void) {
-    realtime_queue = NULL;
-}
-
 void realtime_add(tcb* thread) {
     printf("⏱️ [REALTIME] Añadiendo hilo tid=%d con deadline=%ld, start=%ld, end=%ld\n",
            thread->tid, thread->deadline, thread->time_start, thread->time_end);
     enqueue_edf(thread);
 }
 
-void realtime_yield(void) {
+static tcb* dequeue_next_valid_thread() {
     long now = get_current_time_ms();
-    printf("⏱️ [REALTIME] Yield llamado. now = %ld ms\n", now);
+    tcb* prev = NULL;
+    tcb* curr = realtime_queue;
+    tcb* best = NULL;
+    tcb* best_prev = NULL;
 
-    if (current && !current->finished) {
-        long end_ms = current->time_end * 1000;
-        printf("⏱️ [REALTIME] tid=%d | now=%ld | end=%ld\n", current->tid, now, end_ms);
+    while (curr) {
+        long start_ms = curr->time_start * 1000;
+        long end_ms   = curr->time_end * 1000;
+        tcb* next = curr->next;
 
-        if (now > end_ms) {
-            printf("\n💥 Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n", current->tid, now, end_ms);
-            current->finished = true;
-            current->must_cleanup = true;
+        if (curr->state == READY) {
+            if (now > end_ms) {
+                printf("💥 [REALTIME] Hilo %d EXPLOTÓ sin ejecutarse (now=%ld > end=%ld)\n",
+                       curr->tid, now, end_ms);
+                curr->finished = true;
+                curr->must_cleanup = true;
 
-            scheduler_end();  // 🚨 Terminar inmediatamente el hilo
-            return;
-        } else {
-            printf("⏱️ [REALTIME] Reinsertando hilo tid=%d (dentro de tiempo)\n", current->tid);
-            realtime_add(current);
+                if (prev) prev->next = next;
+                else realtime_queue = next;
+
+                curr = next;
+                continue;
+            }
+
+            if (now >= start_ms) {
+                if (!best || curr->deadline < best->deadline) {
+                    best = curr;
+                    best_prev = prev;
+                }
+            }
         }
+
+        prev = curr;
+        curr = next;
     }
 
-    tcb* next = dequeue_next_ready();
+    if (best) {
+        if (best_prev) best_prev->next = best->next;
+        else realtime_queue = best->next;
+        best->next = NULL;
+        return best;
+    }
+
+    return NULL;
+}
+
+tcb* realtime_next() {
+    return dequeue_next_valid_thread();
+}
+
+void realtime_yield(void) {
+    long now = get_current_time_ms();
+    if (!current || current->finished) return;
+
+    long end_ms = current->time_end * 1000;
+
+    if (now > end_ms) {
+        printf("💥 [REALTIME] Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n",
+               current->tid, now, end_ms);
+        current->finished = true;
+        current->must_cleanup = true;
+        scheduler_end();
+        return;
+    }
+
+    realtime_add(current);  // Reinsertar si aún puede seguir
+
+    tcb* next = dequeue_next_valid_thread();
     if (next) {
         tcb* prev = current;
         current = next;
@@ -93,8 +122,7 @@ void realtime_yield(void) {
 
 void realtime_end(void) {
     current->finished = true;
-
-    tcb* next = dequeue_next_ready();
+    tcb* next = dequeue_next_valid_thread();
     if (next) {
         current = next;
         setcontext(&next->context);
@@ -105,16 +133,11 @@ void realtime_end(void) {
 }
 
 void realtime_run(void) {
-    tcb* next = dequeue_next_ready();
+    tcb* next = dequeue_next_valid_thread();
     if (next) {
         current = next;
         swapcontext(&main_context, &next->context);
     } else {
         printf("[REALTIME] Nada para ejecutar.\n");
     }
-}
-
-// ✅ Adaptación para el scheduler mixto
-tcb* realtime_next() {
-    return dequeue_next_ready();
 }
