@@ -102,13 +102,14 @@ void realtime_yield(void) {
     long end_ms = current->time_end * 1000;
 
     if (now > end_ms) {
-        printf("💥 [REALTIME] Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n",
-               current->tid, now, end_ms);
+        printf("💥 [REALTIME] Hilo %d venció time_end — marcar como terminado, NO eliminar\n",
+               current->tid);
         current->finished = true;
-        current->must_cleanup = true;
-        scheduler_end();
-        return;
+        // ❌ NO usar must_cleanup
+        // ❌ NO usar scheduler_end
+        return;  // permite que el hilo vuelva y haga su cleanup
     }
+    
 
     realtime_add(current);  // Reinsertar si aún puede seguir
 

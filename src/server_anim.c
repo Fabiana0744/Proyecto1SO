@@ -202,6 +202,7 @@ void dibujar_figura_actual(int x, int y, ShapeMatrix* shape) {
 void borrar_figura_final(ObjetoAnimado* obj) {
     limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
     borrar_figura_anterior(obj->current_x, obj->current_y, &obj->shape);
+    printf("🧼 Limpiando figura de obj %d\n", obj->id);
 }
 
 
@@ -238,13 +239,11 @@ void* animar_objeto(void* arg) {
     for (int p = 0; p <= pasos; ) {
         long now = get_current_time_ms();
         if (now > obj->time_end * 1000) {
-            printf("🛑 Hilo tid=%d finaliza por time_end\n", current->tid);
+            printf("🛑 Hilo obj=%d superó time_end\n", obj->id);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: tid=%d no completó su animación a tiempo\n", current->tid);
-                current->finished = true;
-                current->must_cleanup = true;
+                printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
             }
-            break;
+            goto cleanup;
         }
 
         int cur_x = (int)(fx + dx);
@@ -252,12 +251,9 @@ void* animar_objeto(void* arg) {
 
         my_mutex_lock(&canvas_mutex);
 
-        // 🔄 Liberar área actual para evitar auto-colisión
         limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
 
-        // ✅ Verificar colisión en nueva posición
         if (!area_libre_para_objeto(cur_x, cur_y, &obj->shape, obj)) {
-            // 🚫 No puede avanzar, recuperar área y esperar
             asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
             my_mutex_unlock(&canvas_mutex);
             busy_wait_ms(100);
@@ -265,11 +261,8 @@ void* animar_objeto(void* arg) {
             continue;
         }
 
-        // 🧹 Borrar figura anterior
         borrar_figura_anterior(prev_x, prev_y, &obj->shape);
 
-
-        // 🔁 Intentar rotación si corresponde
         if (num_rotaciones > 0 && p > 0 && p % steps_per_rotation == 0 && rotaciones_aplicadas < num_rotaciones) {
             ShapeMatrix copia = obj->shape;
             rotate_shape_matrix(&copia, 90);
@@ -284,9 +277,7 @@ void* animar_objeto(void* arg) {
             int new_x = obj->current_x + delta_x;
             int new_y = obj->current_y + delta_y;
 
-            // 🔄 Verificar colisión para rotación
             if (!area_libre_para_objeto(new_x, new_y, &copia, obj)) {
-                // ❌ Restaurar área y posponer
                 asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
                 my_mutex_unlock(&canvas_mutex);
                 busy_wait_ms(50);
@@ -301,17 +292,12 @@ void* animar_objeto(void* arg) {
             current_rotation = (current_rotation + 90) % 360;
         }
 
-        // ✅ Avanzar posición
         fx += dx;
         fy += dy;
         obj->current_x = cur_x;
         obj->current_y = cur_y;
 
-        // 🖌️ Dibujar figura
         dibujar_figura_actual(cur_x, cur_y, &obj->shape);
-
-
-        // 🧱 Registrar ocupación
         asignar_area_a_objeto(cur_x, cur_y, &obj->shape, obj->id);
 
         my_mutex_unlock(&canvas_mutex);
@@ -325,17 +311,19 @@ void* animar_objeto(void* arg) {
         p++;
     }
 
-    // 🧹 Limpieza final
+cleanup:
     my_mutex_lock(&canvas_mutex);
+    printf("🧹 OBJ %d — Entrando a cleanup en (%d,%d)\n", obj->id, obj->current_x, obj->current_y);
     borrar_figura_final(obj);
     my_mutex_unlock(&canvas_mutex);
 
-        enviar_canvas_a_clientes(canvas);
+    enviar_canvas_a_clientes(canvas);
 
     free(obj);
     my_thread_end(NULL);
     return NULL;
 }
+
 
 static volatile sig_atomic_t running = 1;
 
