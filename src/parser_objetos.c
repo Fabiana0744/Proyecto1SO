@@ -9,6 +9,7 @@ static ObjetoAnimado* lista = NULL;
 static int* total_objetos = NULL;
 
 static int handler(void* user, const char* section, const char* name, const char* value) {
+    (void)user;
     if (strncmp(section, "Objeto", 6) == 0) {
         int index = atoi(&section[6]) - 1;
         if (index >= MAX_OBJETOS) return 0;
