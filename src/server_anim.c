@@ -239,12 +239,15 @@ void* animar_objeto(void* arg) {
     for (int p = 0; p <= pasos; ) {
         long now = get_current_time_ms();
         if (now > obj->time_end * 1000) {
-            printf("🛑 Hilo obj=%d superó time_end\n", obj->id);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
+                printf("💥 EXPLOSIÓN: obj=%d no completó su animación (time_end alcanzado)\n", obj->id);
+                goto cleanup;
+            } else {
+                // RoundRobin y Lottery: simplemente ignoran time_end
+                // pueden seguir ejecutándose hasta completar animación
             }
-            goto cleanup;
         }
+        
 
         int cur_x = (int)(fx + dx);
         int cur_y = (int)(fy + dy);
