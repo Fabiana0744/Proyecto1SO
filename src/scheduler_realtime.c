@@ -92,8 +92,22 @@ static tcb* dequeue_next_valid_thread() {
 }
 
 tcb* realtime_next() {
-    return dequeue_next_valid_thread();
+    while (1) {
+        tcb* best = dequeue_next_valid_thread();
+        if (best) return best;
+
+        // Si ningún hilo está listo, pero hay alguno en cola, puede que aún no haya alcanzado su time_start
+        if (realtime_queue) {
+            busy_wait_ms(20);     // espera un poco
+            my_thread_yield();    // cede el CPU y vuelve a intentar
+            continue;
+        }
+
+        // Si la cola está vacía, no hay nada más que hacer
+        return NULL;
+    }
 }
+
 
 void realtime_yield(void) {
     long now = get_current_time_ms();
