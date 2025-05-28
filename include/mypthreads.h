@@ -74,5 +74,11 @@ int my_mutex_trylock(my_mutex_t* mutex);
 int my_mutex_unlock(my_mutex_t* mutex);
 int my_mutex_destroy(my_mutex_t* mutex);
 
+typedef struct {
+    void* (*func)(void*);
+    void* arg;
+} my_thread_wrapper_args;
+
+
 
 #endif

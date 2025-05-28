@@ -2,9 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>  // para usleep (opcional, evita busy wait excesivo)
 #include "scheduler.h"
 #include <stdio.h>  // Para fprintf
+#include <stdint.h>
+#include <sys/time.h>
+
 
 #define MAX_THREADS 128
 
@@ -14,8 +16,6 @@ ucontext_t main_context;
 static int next_tid = 1;
 static tcb* all_threads[MAX_THREADS] = { NULL };
 
-
-#include <sys/time.h>
 
 static long program_start_ms = 0;
 
@@ -36,6 +36,14 @@ void busy_wait_ms(int ms) {
     long start = get_current_time_ms();
     while ((get_current_time_ms() - start) < ms);
 }
+
+static void thread_start_wrapper(uintptr_t arg_ptr) {
+    my_thread_wrapper_args* wrapper = (my_thread_wrapper_args*) arg_ptr;
+    void* ret = wrapper->func(wrapper->arg);
+    free(wrapper);            // liberamos la estructura
+    my_thread_end(ret);       // finalizamos el hilo
+}
+
 
 
 static tcb* dequeue() {
@@ -102,7 +110,12 @@ int my_thread_create(my_thread_t* thread,
     *thread = new_thread->tid;
     all_threads[new_thread->tid] = new_thread;
 
-    makecontext(&new_thread->context, (void (*)())start_routine, 1, arg);
+    my_thread_wrapper_args* wrapper = malloc(sizeof(my_thread_wrapper_args));
+    if (!wrapper) return -1;
+    wrapper->func = start_routine;
+    wrapper->arg  = arg;
+
+    makecontext(&new_thread->context, (void (*)())thread_start_wrapper, 1, (uintptr_t)wrapper);
 
     scheduler_add(new_thread);
     return 0;
