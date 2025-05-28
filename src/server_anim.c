@@ -206,6 +206,35 @@ void borrar_figura_final(ObjetoAnimado* obj) {
 }
 
 
+void dibujar_explosion(int x, int y) {
+    const char* texto = "* * BOOM * *";
+    int len = strlen(texto);
+    int cx = x - len / 2;
+    int cy = y;
+
+    for (int i = 0; i < len; i++) {
+        if (cx + i >= 0 && cx + i < canvas_width && cy >= 0 && cy < canvas_height) {
+            canvas[cy][cx + i] = texto[i];
+        }
+    }
+}
+
+void borrar_explosion(int x, int y) {
+    const char* texto = "* * BOOM * *";
+    int len = strlen(texto);
+    int cx = x - len / 2;
+    int cy = y;
+
+    for (int i = 0; i < len; i++) {
+        if (cx + i >= 0 && cx + i < canvas_width && cy >= 0 && cy < canvas_height) {
+            canvas[cy][cx + i] = '.';  // reemplazar por fondo
+        }
+    }
+}
+
+
+
+
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
 
@@ -233,31 +262,30 @@ void* animar_objeto(void* arg) {
     if (current_rotation > 0)
         rotate_shape_matrix(&obj->shape, current_rotation);
 
-    esperar_inicio_animacion(obj);  
+    esperar_inicio_animacion(obj);
 
-
-    int delay_por_paso = 150;  // Default para RR / LOTTERY
-
+    int delay_por_paso = 150;
     if (obj->scheduler == SCHED_REALTIME) {
         long now = get_current_time_ms();
         long tiempo_restante_ms = (obj->time_end * 1000) - now;
         if (tiempo_restante_ms <= 0) {
             printf("❌ OBJ %d: Tiempo insuficiente para iniciar animación\n", obj->id);
-            goto cleanup;
+            goto skip_loop;
         }
         delay_por_paso = tiempo_restante_ms / pasos;
         if (delay_por_paso < 10) delay_por_paso = 10;
     }
 
     int pasos_realizados = 0;
+    bool exploto = false;
 
     for (int p = 0; p < pasos; ) {
         long now = get_current_time_ms();
         if (now > obj->time_end * 1000) {
             printf("🛑 Hilo obj=%d superó time_end\n", obj->id);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
-                goto cleanup;
+                exploto = true;
+                break;
             } else {
                 printf("⚠️ OBJ %d continúa después de time_end (sched=%d)\n", obj->id, obj->scheduler);
             }
@@ -329,10 +357,24 @@ void* animar_objeto(void* arg) {
         p++;
     }
 
-cleanup:
+skip_loop:
     my_mutex_lock(&canvas_mutex);
-    printf("🧹 OBJ %d — Entrando a cleanup en (%d,%d)\n", obj->id, obj->current_x, obj->current_y);
-    borrar_figura_final(obj);
+    if (exploto) {
+        printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
+    
+        limpiar_area_de_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
+        borrar_figura_anterior(obj->current_x, obj->current_y, &obj->shape);
+    
+        dibujar_explosion(obj->current_x, obj->current_y);
+        enviar_canvas_a_clientes(canvas);
+        busy_wait_ms(1000); // mostrar la explosión 1s
+    
+        borrar_explosion(obj->current_x, obj->current_y);
+        enviar_canvas_a_clientes(canvas); // mostrar canvas limpio
+    } else {
+        printf("🧹 OBJ %d — Entrando a cleanup en (%d,%d)\n", obj->id, obj->current_x, obj->current_y);
+        borrar_figura_final(obj);
+    }
     my_mutex_unlock(&canvas_mutex);
 
     enviar_canvas_a_clientes(canvas);
@@ -345,6 +387,7 @@ cleanup:
     my_thread_end(NULL);
     return NULL;
 }
+
 
 
 static volatile sig_atomic_t running = 1;
