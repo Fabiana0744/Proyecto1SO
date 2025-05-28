@@ -26,8 +26,11 @@ void lottery_add(tcb* thread) {
 
 tcb* lottery_next() {
     int total_tickets = 0;
+    long now = get_current_time_ms();
+
+    // 1. Calcular total de tickets de hilos listos Y cuyo time_start ya llegó
     for (tcb* t = lottery_queue; t; t = t->next) {
-        if (t->state == READY) {
+        if (t->state == READY && now >= t->time_start * 1000) {
             total_tickets += (t->tickets > 0 ? t->tickets : 1);
         }
     }
@@ -41,7 +44,7 @@ tcb* lottery_next() {
     tcb* curr = lottery_queue;
 
     while (curr) {
-        if (curr->state == READY) {
+        if (curr->state == READY && now >= curr->time_start * 1000) {
             counter += (curr->tickets > 0 ? curr->tickets : 1);
             if (counter >= winning_ticket) {
                 if (prev) prev->next = curr->next;

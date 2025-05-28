@@ -122,9 +122,9 @@ int my_thread_create(my_thread_t* thread,
 }
 
 
-
 int my_thread_yield(void) {
-    scheduler_yield();  // ✅ Aquí se respeta el tipo de scheduler del hilo actual
+    if (current == NULL) return 0;  // prevenir yield sin contexto
+    scheduler_yield();
     return 0;
 }
 
