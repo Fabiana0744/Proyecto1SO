@@ -38,17 +38,6 @@ void busy_wait_ms(int ms) {
 }
 
 
-static void enqueue(tcb* thread) {
-    thread->next = NULL;
-    if (!ready_queue) {
-        ready_queue = thread;
-    } else {
-        tcb* temp = ready_queue;
-        while (temp->next) temp = temp->next;
-        temp->next = thread;
-    }
-}
-
 static tcb* dequeue() {
     if (!ready_queue) return NULL;
     tcb* t = ready_queue;

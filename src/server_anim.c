@@ -206,7 +206,6 @@ void borrar_figura_final(ObjetoAnimado* obj) {
 }
 
 
-
 void* animar_objeto(void* arg) {
     ObjetoAnimado* obj = (ObjetoAnimado*) arg;
 
@@ -236,18 +235,33 @@ void* animar_objeto(void* arg) {
 
     esperar_inicio_animacion(obj);  
 
-    for (int p = 0; p <= pasos; ) {
+
+    int delay_por_paso = 150;  // Default para RR / LOTTERY
+
+    if (obj->scheduler == SCHED_REALTIME) {
+        long now = get_current_time_ms();
+        long tiempo_restante_ms = (obj->time_end * 1000) - now;
+        if (tiempo_restante_ms <= 0) {
+            printf("❌ OBJ %d: Tiempo insuficiente para iniciar animación\n", obj->id);
+            goto cleanup;
+        }
+        delay_por_paso = tiempo_restante_ms / pasos;
+        if (delay_por_paso < 10) delay_por_paso = 10;
+    }
+
+    int pasos_realizados = 0;
+
+    for (int p = 0; p < pasos; ) {
         long now = get_current_time_ms();
         if (now > obj->time_end * 1000) {
+            printf("🛑 Hilo obj=%d superó time_end\n", obj->id);
             if (obj->scheduler == SCHED_REALTIME) {
-                printf("💥 EXPLOSIÓN: obj=%d no completó su animación (time_end alcanzado)\n", obj->id);
+                printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
                 goto cleanup;
             } else {
-                // RoundRobin y Lottery: simplemente ignoran time_end
-                // pueden seguir ejecutándose hasta completar animación
+                printf("⚠️ OBJ %d continúa después de time_end (sched=%d)\n", obj->id, obj->scheduler);
             }
         }
-        
 
         int cur_x = (int)(fx + dx);
         int cur_y = (int)(fy + dy);
@@ -259,7 +273,7 @@ void* animar_objeto(void* arg) {
         if (!area_libre_para_objeto(cur_x, cur_y, &obj->shape, obj)) {
             asignar_area_a_objeto(obj->current_x, obj->current_y, &obj->shape, obj->id);
             my_mutex_unlock(&canvas_mutex);
-            busy_wait_ms(100);
+            busy_wait_ms(50);
             my_thread_yield();
             continue;
         }
@@ -306,11 +320,12 @@ void* animar_objeto(void* arg) {
         my_mutex_unlock(&canvas_mutex);
 
         enviar_canvas_a_clientes(canvas);
-        busy_wait_ms(150);
+        busy_wait_ms(delay_por_paso);
         my_thread_yield();
 
         prev_x = cur_x;
         prev_y = cur_y;
+        pasos_realizados++;
         p++;
     }
 
@@ -321,6 +336,10 @@ cleanup:
     my_mutex_unlock(&canvas_mutex);
 
     enviar_canvas_a_clientes(canvas);
+
+    float porcentaje = (float)pasos_realizados * 100 / pasos;
+    printf("✅ OBJ %d finalizó en posición (%d, %d), avance: %.1f%%\n",
+           obj->id, obj->current_x, obj->current_y, porcentaje);
 
     free(obj);
     my_thread_end(NULL);
