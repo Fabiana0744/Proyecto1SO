@@ -1,3 +1,4 @@
+//scheduler.c:
 #include "scheduler.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -77,15 +78,35 @@ void scheduler_end() {
     }
 }
 
+bool hay_hilos_en_schedulers() {
+    extern tcb* get_all_realtime_threads();
+    extern tcb* get_all_lottery_threads();
+    extern tcb* get_all_rr_threads();
+
+    return get_all_realtime_threads() || get_all_lottery_threads() || get_all_rr_threads();
+}
+
+
 // --- Inicia el scheduler mixto ---
 void scheduler_run() {
     printf("🕹️ Ejecutando scheduler mixto (RR + Lottery + RealTime)\n");
 
-    tcb* next = scheduler_next();
-    if (next) {
-        current = next;
-        swapcontext(&main_context, &next->context);
-    } else {
-        printf("⚠️ No hay hilos listos para ejecutar.\n");
+    while (1) {
+        tcb* next = scheduler_next();
+
+        if (next) {
+            current = next;
+            swapcontext(&main_context, &next->context);
+            // ❌ return;  // ← ¡No debes salir del bucle aquí!
+            continue;
+        }
+
+        if (hay_hilos_en_schedulers()) {
+            busy_wait_ms(50);  // pequeño delay
+            continue;
+        }
+
+        printf("⚠️ No hay más hilos ni pendientes. Finalizando.\n");
+        return;
     }
 }

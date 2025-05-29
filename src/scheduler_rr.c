@@ -1,3 +1,4 @@
+//scheduler_rr.c:
 #include "scheduler.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,11 @@ extern tcb* current;
 void rr_init() {
     rr_queue = NULL;
 }
+
+tcb* get_all_rr_threads(void) {
+    return rr_queue;
+}
+
 
 void rr_add(tcb* thread) {
     printf("🌀 [RR] Añadiendo hilo tid=%d al scheduler Round Robin\n", thread->tid);

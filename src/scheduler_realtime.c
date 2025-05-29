@@ -1,3 +1,4 @@
+//scheduler_realtime.c:
 #include "scheduler.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,11 @@ static tcb* realtime_queue = NULL;
 extern ucontext_t main_context;
 extern tcb* current;
 extern long get_current_time_ms();
+
+tcb* get_all_realtime_threads(void) {
+    return realtime_queue;
+}
+
 
 void realtime_init(void) {
     realtime_queue = NULL;

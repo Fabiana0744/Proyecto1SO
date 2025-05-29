@@ -1,3 +1,4 @@
+// scheduler.h:
 #ifndef SCHEDULER_H
 #define SCHEDULER_H
 
@@ -32,6 +33,11 @@ extern long start_time_ms;     // 🕒 variable global compartida
 
 // utils.h
 void init_timer();
+
+// Acceso a las colas internas (para saber si hay hilos pendientes)
+tcb* get_all_realtime_threads(void);
+tcb* get_all_rr_threads(void);
+tcb* get_all_lottery_threads(void);
 
 
 #endif
