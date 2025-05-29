@@ -15,6 +15,9 @@
 #define CANVAS_WIDTH 200
 #define CANVAS_HEIGHT 100
 
+#define COBERTURA_UMBRAL 0.85f
+#define TIEMPO_UMBRAL_SEG 2
+
 // 🔧 Variables globales
 char canvas[CANVAS_HEIGHT][CANVAS_WIDTH];
 int canvas_owner[CANVAS_HEIGHT][CANVAS_WIDTH]; // 0 = libre, >0 = ID del objeto
@@ -455,9 +458,28 @@ void run_server(const char* cfg)
             fprintf(stderr, "❌ Memoria insuficiente para objeto %d\n", i);
             continue;
         }
-        *copia = objetos[i];          /* copia profunda de la struct */
+
+        *copia = objetos[i];
         copia->id = i + 1;
         objetos_activos[copia->id - 1] = copia;
+
+        // 🚀 Determinar si debe usar LOTTERY según velocidad requerida
+        int dx = abs(copia->x_end - copia->x_start);
+        int dy = abs(copia->y_end - copia->y_start);
+        float distancia = dx > dy ? dx : dy; // pasos requeridos (como en animación)
+
+        long duracion = copia->time_end - copia->time_start;
+        if (duracion == 0) duracion = 1; // prevenir división por cero
+
+        float velocidad_requerida = distancia / (float)duracion; // pasos por segundo
+        float umbral_velocidad = 20.0f; // si supera esto, usar LOTTERY
+
+        if (velocidad_requerida > umbral_velocidad) {
+            printf("🚀 OBJ %d necesita velocidad alta (%.1f pasos/s) → usando LOTTERY\n",
+                   i, velocidad_requerida);
+            copia->scheduler = SCHED_LOTTERY;
+            copia->tickets = 50;
+        }
 
         my_thread_t tid;
         int rc = my_thread_create(&tid,
@@ -473,6 +495,7 @@ void run_server(const char* cfg)
             free(copia);
             continue;
         }
+
         printf("✅ Hilo creado para objeto %d (tid=%d)\n", i, tid);
     }
 
@@ -490,7 +513,6 @@ void run_server(const char* cfg)
         if (clients[i] > 0) close(clients[i]);
     close(server_fd);
 
-    /* (Opcional) Liberar recursos adicionales aquí */
-
     return;
 }
+
