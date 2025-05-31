@@ -423,9 +423,6 @@ void run_server(const char* cfg)
                o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
     }
 
-    /* 3. Inicializar temporizador base */
-    init_timer();
-
     canvas_width  = config.width;
     canvas_height = config.height;
     num_monitors  = config.num_monitors;
@@ -448,6 +445,9 @@ void run_server(const char* cfg)
         clients[i] = accept_client(server_fd);
         printf("✅ Monitor %d conectado.\n", i);
     }
+
+    /* 3. Inicializar temporizador base */
+    init_timer();
 
     /* 7. Inicializar schedulers y crear los hilos-objeto */
     scheduler_init();
