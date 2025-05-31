@@ -3,8 +3,8 @@
 
 #include "objeto.h"
 
-#define MAX_OBJETOS 32
+#define MAX_OBJECTS 32
 
-int cargar_objetos_desde_ini(const char* archivo_ini, ObjetoAnimado objetos[], int* total);
+int object_load_from_ini(const char* archivo_ini, AnimatedObject objetos[], int* total);
 
 #endif

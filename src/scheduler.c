@@ -78,7 +78,7 @@ void scheduler_end() {
     }
 }
 
-bool hay_hilos_en_schedulers() {
+bool are_threads_pending_in_schedulers() {
     extern tcb* get_all_realtime_threads();
     extern tcb* get_all_lottery_threads();
     extern tcb* get_all_rr_threads();
@@ -101,7 +101,7 @@ void scheduler_run() {
             continue;
         }
 
-        if (hay_hilos_en_schedulers()) {
+        if (are_threads_pending_in_schedulers()) {
             busy_wait_ms(50);  // pequeño delay
             continue;
         }

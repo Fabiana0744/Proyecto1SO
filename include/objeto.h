@@ -34,6 +34,6 @@ typedef struct {
 
     ShapeMatrix shape;
 
-} ObjetoAnimado;
+} AnimatedObject;
 
 #endif

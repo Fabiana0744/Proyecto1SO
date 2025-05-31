@@ -1,7 +1,5 @@
 {
     "files.associations": {
-        "anim.h": "c",
-        "time.h": "c",
-        "borrador": "c"
+        "mypthreads.h": "c"
     }
 }

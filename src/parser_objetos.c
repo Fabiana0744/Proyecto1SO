@@ -4,18 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-static ObjetoAnimado* current_obj = NULL;
-static ObjetoAnimado* lista = NULL;
-static int* total_objetos = NULL;
+static AnimatedObject* current_obj = NULL;
+static AnimatedObject* list = NULL;
+static int* object_total = NULL;
 
 static int handler(void* user, const char* section, const char* name, const char* value) {
     (void)user;
     if (strncmp(section, "Objeto", 6) == 0) {
         int index = atoi(&section[6]) - 1;
-        if (index >= MAX_OBJETOS) return 0;
+        if (index >= MAX_OBJECTS) return 0;
 
-        current_obj = &lista[index];
-        if (index + 1 > *total_objetos) *total_objetos = index + 1;
+        current_obj = &list[index];
+        if (index + 1 > *object_total) *object_total = index + 1;
 
         if (strcmp(name, "shape") == 0) {
             strncpy(current_obj->name, section, sizeof(current_obj->name));
@@ -61,9 +61,9 @@ static int handler(void* user, const char* section, const char* name, const char
     return 1;
 }
 
-int cargar_objetos_desde_ini(const char* archivo_ini, ObjetoAnimado objetos[], int* total) {
-    lista = objetos;
-    total_objetos = total;
+int object_load_from_ini(const char* archivo_ini, AnimatedObject objects[], int* total) {
+    list = objects;
+    object_total = total;
     *total = 0;
     return ini_parse(archivo_ini, handler, NULL);
 }
