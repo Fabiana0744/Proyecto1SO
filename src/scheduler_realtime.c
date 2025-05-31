@@ -22,11 +22,13 @@ void realtime_init(void) {
     realtime_queue = NULL;
 }
 
-static void enqueue_edf(tcb* thread) {
+/* Reemplaza la función completa por la siguiente versión estable */
+static void enqueue_edf(tcb* thread)
+{
     thread->next = NULL;
 
-    if (!realtime_queue || thread->deadline < realtime_queue->deadline) {
-        thread->next = realtime_queue;
+    /* Cola vacía ⇒ primer elemento */
+    if (!realtime_queue) {
         realtime_queue = thread;
         return;
     }
@@ -34,12 +36,22 @@ static void enqueue_edf(tcb* thread) {
     tcb* prev = NULL;
     tcb* curr = realtime_queue;
 
-    while (curr && thread->deadline >= curr->deadline) {
+    /* 1️⃣ Avanzar mientras el deadline sea MENOR (prioridad más alta)        */
+    while (curr && curr->deadline < thread->deadline) {
         prev = curr;
         curr = curr->next;
     }
 
-    prev->next = thread;
+    /* 2️⃣ Avanzar CON IGUAL deadline para quedar **después** del último       */
+    while (curr && curr->deadline == thread->deadline) {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    /* Inserción */
+    if (prev) prev->next = thread;
+    else      realtime_queue = thread;
+
     thread->next = curr;
 }
 
@@ -49,53 +61,48 @@ void realtime_add(tcb* thread) {
     enqueue_edf(thread);
 }
 
-static tcb* dequeue_next_valid_thread() {
+static tcb* dequeue_next_valid_thread(void)
+{
     long now = get_current_time_ms();
+
     tcb* prev = NULL;
     tcb* curr = realtime_queue;
-    tcb* best = NULL;
-    tcb* best_prev = NULL;
 
     while (curr) {
         long start_ms = curr->time_start * 1000;
-        long end_ms   = curr->time_end * 1000;
-        tcb* next = curr->next;
+        long end_ms   = curr->time_end   * 1000;
 
-        if (curr->state == READY) {
-            if (now > end_ms) {
-                printf("💥 [REALTIME] Hilo %d EXPLOTÓ sin ejecutarse (now=%ld > end=%ld)\n",
-                       curr->tid, now, end_ms);
-                curr->finished = true;
-                curr->must_cleanup = true;
+        /* Expirado sin ejecutarse → explota y se elimina                 */
+        if (now > end_ms) {
+            printf("💥 [REALTIME] Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n",
+                   curr->tid, now, end_ms);
+            curr->finished    = true;
+            curr->must_cleanup = true;
 
-                if (prev) prev->next = next;
-                else realtime_queue = next;
+            /* quitar de la cola */
+            if (prev) prev->next = curr->next;
+            else      realtime_queue = curr->next;
 
-                curr = next;
-                continue;
-            }
-
-            if (now >= start_ms) {
-                if (!best || curr->deadline < best->deadline) {
-                    best = curr;
-                    best_prev = prev;
-                }
-            }
+            curr = (prev ? prev->next : realtime_queue);
+            continue;
         }
 
+        /* READY y ya alcanzó su instante de inicio ⇒ es el elegido       */
+        if (curr->state == READY && now >= start_ms) {
+            if (prev) prev->next = curr->next;
+            else      realtime_queue = curr->next;
+
+            curr->next = NULL;
+            return curr;
+        }
+
+        /* siguiente nodo */
         prev = curr;
-        curr = next;
+        curr = curr->next;
     }
-
-    if (best) {
-        if (best_prev) best_prev->next = best->next;
-        else realtime_queue = best->next;
-        best->next = NULL;
-        return best;
-    }
-
-    return NULL;
+    return NULL;        /* nada listo todavía */
 }
+
 
 tcb* realtime_next() {
     while (1) {
@@ -115,28 +122,42 @@ tcb* realtime_next() {
 }
 
 
-void realtime_yield(void) {
+void realtime_yield(void)
+{
     long now = get_current_time_ms();
     if (!current || current->finished) return;
 
     long end_ms = current->time_end * 1000;
-
     if (now > end_ms) {
-        printf("💥 [REALTIME] Hilo %d venció time_end — marcar como terminado, NO eliminar\n",
-               current->tid);
+        printf("💥 [REALTIME] Hilo %d venció time_end\n", current->tid);
         current->finished = true;
-        // ❌ NO usar must_cleanup
-        // ❌ NO usar scheduler_end
-        return;  // permite que el hilo vuelva y haga su cleanup
+        return;                 /* deja que el hilo haga cleanup */
     }
-    
 
-    realtime_add(current);  // Reinsertar si aún puede seguir
+    /* 1️⃣ Antes de ceder CPU, busquemos si hay *alguien* con deadline menor */
+    tcb *candidate = realtime_queue;        /* no lo modificamos */
+    long best_dl   = LONG_MAX;
 
-    tcb* next = dequeue_next_valid_thread();
+    while (candidate) {
+        if (candidate->state == READY &&
+            now >= candidate->time_start * 1000 &&
+            candidate->deadline < best_dl)
+            best_dl = candidate->deadline;
+
+        candidate = candidate->next;
+    }
+
+    /* 2️⃣ Si no hay uno MEJOR, simplemente seguimos ejecutando */
+    if (best_dl >= current->deadline) {
+        return;                 /* → el yield se ignora */
+    }
+
+    /* 3️⃣ Hay un hilo con deadline menor ⇒ sí cambiamos */
+    realtime_add(current);              /* re-encola al final del sub-grupo */
+    tcb *next = dequeue_next_valid_thread();   /* será el “mejor” */
     if (next) {
-        tcb* prev = current;
-        current = next;
+        tcb *prev = current;
+        current   = next;
         swapcontext(&prev->context, &next->context);
     }
 }
