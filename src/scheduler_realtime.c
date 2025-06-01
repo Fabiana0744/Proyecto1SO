@@ -1,4 +1,5 @@
-//scheduler_realtime.c:
+// scheduler_realtime.c
+
 #include "scheduler.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,27 +8,33 @@
 #include <sys/time.h>
 #include <stdbool.h>
 
-static tcb* realtime_queue = NULL;
+static tcb* realtime_queue = NULL;  // Cola de hilos gestionados por el scheduler de tiempo real.
 
-extern ucontext_t main_context;
-extern tcb* current;
-extern long get_current_time_ms();
+extern ucontext_t main_context;     // Contexto del hilo principal.
+extern tcb* current;                // Hilo actualmente en ejecución.
+extern long get_current_time_ms();  // Función para obtener tiempo actual relativo.
 
+// Retorna todos los hilos registrados en la cola de tiempo real.
+// Entrada: ninguna.
+// Salida: puntero al primer hilo en la cola.
 tcb* get_all_realtime_threads(void) {
     return realtime_queue;
 }
 
-
+// Inicializa el planificador de tiempo real (EDF).
+// Entrada: ninguna.
+// Salida: la cola se limpia para iniciar vacía.
 void realtime_init(void) {
     realtime_queue = NULL;
 }
 
-/* Reemplaza la función completa por la siguiente versión estable */
+// Inserta un hilo en la cola EDF según su deadline.
+// Entrada: puntero al hilo a insertar.
+// Salida: la cola se reorganiza para mantener orden por deadline.
 static void enqueue_edf(tcb* thread)
 {
     thread->next = NULL;
 
-    /* Cola vacía ⇒ primer elemento */
     if (!realtime_queue) {
         realtime_queue = thread;
         return;
@@ -36,35 +43,39 @@ static void enqueue_edf(tcb* thread)
     tcb* prev = NULL;
     tcb* curr = realtime_queue;
 
-    /* 1️⃣ Avanzar mientras el deadline sea MENOR (prioridad más alta)        */
+    // Inserta antes del primer hilo con deadline mayor.
     while (curr && curr->deadline < thread->deadline) {
         prev = curr;
         curr = curr->next;
     }
 
-    /* 2️⃣ Avanzar CON IGUAL deadline para quedar **después** del último       */
+    // Si hay empate de deadline, inserta al final del subgrupo.
     while (curr && curr->deadline == thread->deadline) {
         prev = curr;
         curr = curr->next;
     }
 
-    /* Inserción */
     if (prev) prev->next = thread;
     else      realtime_queue = thread;
 
     thread->next = curr;
 }
 
+// Añade un hilo a la cola de planificación de tiempo real.
+// Entrada: puntero al hilo a añadir.
+// Salida: el hilo se inserta ordenadamente según EDF.
 void realtime_add(tcb* thread) {
     printf("⏱️ [REALTIME] Añadiendo hilo tid=%d con deadline=%ld, start=%ld, end=%ld\n",
            thread->tid, thread->deadline, thread->time_start, thread->time_end);
     enqueue_edf(thread);
 }
 
+// Extrae el siguiente hilo válido según EDF y restricciones temporales.
+// Entrada: ninguna.
+// Salida: puntero al mejor hilo listo, o NULL si no hay disponible.
 static tcb* dequeue_next_valid_thread(void)
 {
     long now = get_current_time_ms();
-
     tcb* prev = NULL;
     tcb* curr = realtime_queue;
 
@@ -72,14 +83,13 @@ static tcb* dequeue_next_valid_thread(void)
         long start_ms = curr->time_start * 1000;
         long end_ms   = curr->time_end   * 1000;
 
-        /* Expirado sin ejecutarse → explota y se elimina                 */
+        // Hilo expirado sin ejecutarse ⇒ se descarta.
         if (now > end_ms) {
             printf("💥 [REALTIME] Hilo %d EXPLOTÓ (now=%ld > end=%ld)\n",
                    curr->tid, now, end_ms);
-            curr->finished    = true;
+            curr->finished = true;
             curr->must_cleanup = true;
 
-            /* quitar de la cola */
             if (prev) prev->next = curr->next;
             else      realtime_queue = curr->next;
 
@@ -87,7 +97,7 @@ static tcb* dequeue_next_valid_thread(void)
             continue;
         }
 
-        /* READY y ya alcanzó su instante de inicio ⇒ es el elegido       */
+        // Hilo listo y dentro del rango de tiempo ⇒ se selecciona.
         if (curr->state == READY && now >= start_ms) {
             if (prev) prev->next = curr->next;
             else      realtime_queue = curr->next;
@@ -96,32 +106,35 @@ static tcb* dequeue_next_valid_thread(void)
             return curr;
         }
 
-        /* siguiente nodo */
+        // Avanza al siguiente nodo.
         prev = curr;
         curr = curr->next;
     }
-    return NULL;        /* nada listo todavía */
+
+    return NULL;
 }
 
-
+// Selecciona el siguiente hilo a ejecutar según EDF, esperando si es necesario.
+// Entrada: ninguna.
+// Salida: puntero al hilo seleccionado o NULL si no hay más hilos.
 tcb* realtime_next() {
     while (1) {
         tcb* best = dequeue_next_valid_thread();
         if (best) return best;
 
-        // Si ningún hilo está listo, pero hay alguno en cola, puede que aún no haya alcanzado su time_start
         if (realtime_queue) {
-            busy_wait_ms(20);     // espera un poco
-            my_thread_yield();    // cede el CPU y vuelve a intentar
+            busy_wait_ms(20);
+            my_thread_yield();  // Permite que otros hilos avancen.
             continue;
         }
 
-        // Si la cola está vacía, no hay nada más que hacer
         return NULL;
     }
 }
 
-
+// Cede la CPU si hay otro hilo con menor deadline que ya pueda ejecutarse.
+// Entrada: ninguna.
+// Salida: realiza cambio de contexto si corresponde, o se ignora si no aplica.
 void realtime_yield(void)
 {
     long now = get_current_time_ms();
@@ -131,12 +144,12 @@ void realtime_yield(void)
     if (now > end_ms) {
         printf("💥 [REALTIME] Hilo %d venció time_end\n", current->tid);
         current->finished = true;
-        return;                 /* deja que el hilo haga cleanup */
+        return;
     }
 
-    /* 1️⃣ Antes de ceder CPU, busquemos si hay *alguien* con deadline menor */
-    tcb *candidate = realtime_queue;        /* no lo modificamos */
-    long best_dl   = LONG_MAX;
+    // Busca si hay otro hilo con deadline menor listo para ejecutarse.
+    tcb *candidate = realtime_queue;
+    long best_dl = LONG_MAX;
 
     while (candidate) {
         if (candidate->state == READY &&
@@ -147,21 +160,24 @@ void realtime_yield(void)
         candidate = candidate->next;
     }
 
-    /* 2️⃣ Si no hay uno MEJOR, simplemente seguimos ejecutando */
+    // Si el hilo actual tiene menor o igual deadline ⇒ sigue ejecutando.
     if (best_dl >= current->deadline) {
-        return;                 /* → el yield se ignora */
+        return;
     }
 
-    /* 3️⃣ Hay un hilo con deadline menor ⇒ sí cambiamos */
-    realtime_add(current);              /* re-encola al final del sub-grupo */
-    tcb *next = dequeue_next_valid_thread();   /* será el “mejor” */
+    // Hay un hilo con mejor deadline ⇒ se cede el CPU.
+    realtime_add(current);
+    tcb *next = dequeue_next_valid_thread();
     if (next) {
         tcb *prev = current;
-        current   = next;
+        current = next;
         swapcontext(&prev->context, &next->context);
     }
 }
 
+// Marca el hilo actual como finalizado y transfiere el control al siguiente.
+// Entrada: ninguna.
+// Salida: cambio de contexto al siguiente hilo o retorno al hilo principal.
 void realtime_end(void) {
     current->finished = true;
     tcb* next = dequeue_next_valid_thread();
@@ -174,6 +190,9 @@ void realtime_end(void) {
     }
 }
 
+// Inicia la ejecución de hilos según el orden definido por EDF.
+// Entrada: ninguna.
+// Salida: cambia el contexto al primer hilo listo o finaliza si no hay hilos válidos.
 void realtime_run(void) {
     tcb* next = dequeue_next_valid_thread();
     if (next) {

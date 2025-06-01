@@ -18,23 +18,39 @@
 #define COVERAGE_THRESHOLD 0.85f
 #define TIME_THRESHOLD 2
 
-// 🔧 Variables globales
+// --- 🔧 Variables globales ---
+
+// Representa el canvas principal donde se dibujan los objetos.
+// Entrada: modificada por los hilos de animación.
+// Salida: enviada a los monitores.
 char canvas[CANVAS_HEIGHT][CANVAS_WIDTH];
+
+// Controla qué objeto es dueño de cada celda del canvas.
+// Entrada: se actualiza durante las animaciones.
+// Salida: usada para detectar colisiones o interferencias.
 int canvas_owner[CANVAS_HEIGHT][CANVAS_WIDTH]; // 0 = libre, >0 = ID del objeto
-AnimatedObject* active_objects[MAX_OBJECTS]; // indexado por id - 1
 
+// Referencias a los objetos activos animados, indexados por ID.
+// Entrada: llenado al cargar los objetos desde archivo.
+// Salida: usado por los hilos de animación.
+AnimatedObject* active_objects[MAX_OBJECTS];
 
+// Mutex para proteger el acceso concurrente al canvas.
+// Entrada: usado por los hilos al modificar el canvas.
+// Salida: asegura sincronización.
 my_mutex_t canvas_mutex;
 
-int clients[MAX_MONITORS];
-int num_monitors = 0;
-int canvas_width = 0;
-int canvas_height = 0;
+int clients[MAX_MONITORS];  // Almacena los sockets de cada cliente/monitor conectado.
+int num_monitors = 0;       // Cantidad actual de monitores conectados.
+int canvas_width = 0;       // Ancho total del canvas.
+int canvas_height = 0;      // Alto total del canvas.
 
+// --- 🟢 Enviar canvas dividido a los monitores ---
 
-// 🟢 Enviar canvas dividido a los monitores
+// Envía una porción del canvas a cada monitor conectado.
+// Entrada: matriz canvas completa con contenido actual.
+// Salida: cada cliente recibe su sección correspondiente.
 void send_client_canvas(char canvas[][CANVAS_WIDTH]) {
-    // 🔍 Mostrar configuración antes de dividir
     printf("📤 Enviando canvas de tamaño %dx%d dividido entre %d monitores\n",
            canvas_width, canvas_height, num_monitors);
 
@@ -47,11 +63,10 @@ void send_client_canvas(char canvas[][CANVAS_WIDTH]) {
         pkt.width = section_width;
         pkt.height = canvas_height;
 
-        // 🔍 Mostrar información de la sección enviada
         printf("➡️  Sección para cliente %d → x=%d, ancho=%d, alto=%d\n",
                i, pkt.x, pkt.width, pkt.height);
 
-        // copyr contenido de canvas al paquete
+        // Copia la sección del canvas global al paquete para enviar
         for (int row = 0; row < pkt.height; row++) {
             for (int col = 0; col < pkt.width; col++) {
                 pkt.data[row][col] = canvas[row][col + pkt.x];
@@ -62,7 +77,9 @@ void send_client_canvas(char canvas[][CANVAS_WIDTH]) {
     }
 }
 
-
+// Rota una figura en su matriz según el ángulo especificado (90, 180 o 270 grados).
+// Entrada: puntero a ShapeMatrix y ángulo deseado.
+// Salida: la matriz es modificada en lugar.
 void rotate_shape_matrix(ShapeMatrix* shape, int angle) {
     ShapeMatrix temp = *shape;
     int r = temp.rows;
@@ -91,11 +108,14 @@ void rotate_shape_matrix(ShapeMatrix* shape, int angle) {
                     shape->data[i][j] = temp.data[j][c - 1 - i];
             break;
 
-        default:  // 0 grados, sin cambios
+        default:  // Si el ángulo es 0, no se modifica la forma.
             break;
     }
 }
 
+// Verifica si una figura puede colocarse en una posición sin invadir otras.
+// Entrada: posición (x, y), puntero a la figura, puntero al objeto correspondiente.
+// Salida: true si el área está libre o solo contiene el mismo objeto, false si hay colisión.
 bool free_object_area(int x, int y, ShapeMatrix* shape, AnimatedObject* obj) {
     for (int i = 0; i < shape->rows; i++) {
         for (int j = 0; j < shape->cols; j++) {
@@ -109,7 +129,6 @@ bool free_object_area(int x, int y, ShapeMatrix* shape, AnimatedObject* obj) {
 
             int ocupante = canvas_owner[cy][cx];
             if (ocupante != 0 && ocupante != obj->id) {
-                // NO permitir paso sobre otro objeto
                 return false;
             }
         }
@@ -117,8 +136,9 @@ bool free_object_area(int x, int y, ShapeMatrix* shape, AnimatedObject* obj) {
     return true;
 }
 
-
-
+// Asigna las celdas ocupadas por una figura a su ID en canvas_owner.
+// Entrada: posición (x, y), puntero a figura, ID del objeto.
+// Salida: actualiza la matriz canvas_owner.
 void object_area_assignment(int x, int y, ShapeMatrix* shape, int id) {
     for (int i = 0; i < shape->rows; i++) {
         for (int j = 0; j < shape->cols; j++) {
@@ -133,7 +153,9 @@ void object_area_assignment(int x, int y, ShapeMatrix* shape, int id) {
     }
 }
 
-
+// Libera las celdas ocupadas por un objeto en la matriz canvas_owner.
+// Entrada: posición (x, y), figura (forma), y su ID.
+// Salida: las celdas correspondientes se marcan como libres (0).
 void object_area_clean(int x, int y, ShapeMatrix* shape, int id) {
     for (int i = 0; i < shape->rows; i++) {
         for (int j = 0; j < shape->cols; j++) {
@@ -150,7 +172,9 @@ void object_area_clean(int x, int y, ShapeMatrix* shape, int id) {
     }
 }
 
-
+// Espera hasta que llegue el tiempo de inicio del objeto.
+// Entrada: puntero al objeto animado.
+// Salida: la función bloquea hasta que get_current_time_ms >= time_start.
 void animation_start_wait(AnimatedObject* obj) {
     long start_ms = obj->time_start * 1000;
     while (get_current_time_ms() < start_ms) {
@@ -159,7 +183,9 @@ void animation_start_wait(AnimatedObject* obj) {
     }
 }
 
-
+// Borra la figura anterior del canvas visual (solo caracteres).
+// Entrada: posición (x, y) y figura a borrar.
+// Salida: las celdas ocupadas por la figura se reemplazan con '.'.
 void erase_prev_figure(int x, int y, ShapeMatrix* shape) {
     for (int i = 0; i < shape->rows; i++) {
         for (int j = 0; j < shape->cols; j++) {
@@ -174,6 +200,9 @@ void erase_prev_figure(int x, int y, ShapeMatrix* shape) {
     }
 }
 
+// Dibuja una figura en el canvas visual con sus caracteres.
+// Entrada: posición (x, y) y figura a dibujar.
+// Salida: las celdas del canvas se llenan con los caracteres de la figura.
 void draw_curr_figure(int x, int y, ShapeMatrix* shape) {
     for (int i = 0; i < shape->rows; i++) {
         for (int j = 0; j < shape->cols; j++) {
@@ -188,13 +217,18 @@ void draw_curr_figure(int x, int y, ShapeMatrix* shape) {
     }
 }
 
+// Borra completamente la figura del objeto del canvas (propiedad + visual).
+// Entrada: puntero al objeto animado.
+// Salida: se elimina visualmente y se liberan sus celdas de propiedad.
 void erase_final_figure(AnimatedObject* obj) {
     object_area_clean(obj->current_x, obj->current_y, &obj->shape, obj->id);
     erase_prev_figure(obj->current_x, obj->current_y, &obj->shape);
     printf("🧼 Limpiando figura de obj %d\n", obj->id);
 }
 
-
+// Dibuja una animación de explosión en una posición central.
+// Entrada: coordenadas (x, y) para centrar el texto "* * BOOM * *".
+// Salida: la explosión se muestra en el canvas.
 void explotion_draw(int x, int y) {
     const char* text = "* * BOOM * *";
     int len = strlen(text);
@@ -208,6 +242,9 @@ void explotion_draw(int x, int y) {
     }
 }
 
+// Borra el texto de explosión del canvas visual.
+// Entrada: coordenadas (x, y) donde se dibujó previamente la explosión.
+// Salida: las celdas se reemplazan por '.'.
 void erase_explotion(int x, int y) {
     const char* text = "* * BOOM * *";
     int len = strlen(text);
@@ -216,20 +253,22 @@ void erase_explotion(int x, int y) {
 
     for (int i = 0; i < len; i++) {
         if (cx + i >= 0 && cx + i < canvas_width && cy >= 0 && cy < canvas_height) {
-            canvas[cy][cx + i] = '.';  // reemplazar por fondo
+            canvas[cy][cx + i] = '.';
         }
     }
 }
 
+// Ejecuta la animación de un objeto: movimiento, rotación y control de tiempo.
+// Entrada: puntero a la estructura AnimatedObject (pasada como void*).
+// Salida: ejecuta la animación paso a paso y termina el hilo.
+void* object_animate(void* arg)
+{
+    AnimatedObject* obj = (AnimatedObject*)arg;
 
-
-
-void* object_animate(void* arg) {
-    AnimatedObject* obj = (AnimatedObject*) arg;
-
+    /* ----------  PRE-CÁLCULOS DE MOVIMIENTO  ---------- */
     int dx_total = abs(obj->x_end - obj->x_start);
     int dy_total = abs(obj->y_end - obj->y_start);
-    int steps = dx_total > dy_total ? dx_total : dy_total;
+    int steps    = (dx_total > dy_total ? dx_total : dy_total);
     if (steps == 0) steps = 1;
 
     float dx = (float)(obj->x_end - obj->x_start) / steps;
@@ -237,138 +276,132 @@ void* object_animate(void* arg) {
 
     float fx = obj->x_start;
     float fy = obj->y_start;
-    int prev_x = (int)fx;
-    int prev_y = (int)fy;
+    obj->current_x = (int)fx;
+    obj->current_y = (int)fy;
 
-    int rot_start = obj->rotation_start % 360;
-    int rot_end   = obj->rotation_end % 360;
-    int total_rotation = (rot_end - rot_start + 360) % 360;
-    int num_rotations = total_rotation / 90;
-    int steps_per_rotation = (num_rotations > 0) ? steps / num_rotations : steps + 1;
+    /* ----------  PRE-CÁLCULOS DE ROTACIÓN  ---------- */
+    int rot_start        = obj->rotation_start % 360;
+    int rot_end          = obj->rotation_end   % 360;
+    int total_rotation   = (rot_end - rot_start + 360) % 360;   /* 0-270 */
+    int num_rotations    = total_rotation / 90;                 /* ¼-vueltas */
+    int steps_per_rot    = (num_rotations ? steps / num_rotations : steps+1);
     int applied_rotations = 0;
-    int current_rotation = rot_start;
 
-    if (current_rotation > 0)
-        rotate_shape_matrix(&obj->shape, current_rotation);
+    if (rot_start)                  /* si arranca girada */
+        rotate_shape_matrix(&obj->shape, rot_start);
 
+    /* ----------  ESPERA HASTA time_start ---------- */
     animation_start_wait(obj);
 
-    int delay_step = 150;
+    /* ----------  DELAY ENTRE FRAMES  ---------- */
+    int delay_step = 150;           /* por defecto 150 ms */
+
     if (obj->scheduler == SCHED_REALTIME) {
-        long now = get_current_time_ms();
-        long remain_time_ms = (obj->time_end * 1000) - now;
-        if (remain_time_ms <= 0) {
-            printf("❌ OBJ %d: Tiempo insuficiente para iniciar animación\n", obj->id);
-            goto skip_loop;
+        long now          = get_current_time_ms();
+        long remain_ms    = (obj->time_end*1000) - now;
+        if (remain_ms <= 0) {
+            printf("❌ OBJ %d sin tiempo para iniciar\n", obj->id);
+            my_thread_end(NULL);
+            return NULL;
         }
-        delay_step = remain_time_ms / steps;
+        delay_step = remain_ms / steps;
         if (delay_step < 10) delay_step = 10;
     }
 
-    int step_done = 0;
-    bool exploded = false;
+    /* ============================================================ */
+    bool  exploded = false;
+    int   p        = 0;             /* paso actual */
 
-    for (int p = 0; p < steps; ) {
+    while (p < steps) {
+
         long now = get_current_time_ms();
-        if (now > obj->time_end * 1000) {
-            printf("🛑 Hilo obj=%d superó time_end\n", obj->id);
-            if (obj->scheduler == SCHED_REALTIME) {
-                exploded = true;
-                break;
-            } else {
-                printf("⚠️ OBJ %d continúa después de time_end (sched=%d)\n", obj->id, obj->scheduler);
-            }
+        if (now > obj->time_end*1000) {
+            printf("🛑 OBJ %d superó time_end\n", obj->id);
+            if (obj->scheduler == SCHED_REALTIME) { exploded = true; break; }
         }
 
-        int cur_x = (int)(fx + dx);
-        int cur_y = (int)(fy + dy);
+        /* ----------  CALCULAR PRÓXIMO ESTADO (pos + forma)  ---------- */
+        int next_x = (int)(fx + dx);
+        int next_y = (int)(fy + dy);
 
+        bool will_rotate = (num_rotations &&
+                            p && (p % steps_per_rot == 0) &&
+                            applied_rotations < num_rotations);
+
+        ShapeMatrix cand_shape = obj->shape;      /* copia temporal */
+        int dest_x = next_x;
+        int dest_y = next_y;
+
+        if (will_rotate) {
+            rotate_shape_matrix(&cand_shape, 90); /* gira la copia */
+
+            /* compensar desplazamiento del centro                     */
+            int cx_old = obj->shape.cols/2, cy_old = obj->shape.rows/2;
+            int cx_new = cand_shape.cols/2, cy_new = cand_shape.rows/2;
+            dest_x += cx_old - cx_new;
+            dest_y += cy_old - cy_new;
+        }
+
+        /* --------------------  SECCIÓN CRÍTICA  -------------------- */
         my_mutex_lock(&canvas_mutex);
 
-        object_area_clean(obj->current_x, obj->current_y, &obj->shape, obj->id);
-
-        if (!free_object_area(cur_x, cur_y, &obj->shape, obj)) {
-            object_area_assignment(obj->current_x, obj->current_y, &obj->shape, obj->id);
+        /* 1️⃣  ¿ÁREA DESTINO DISPONIBLE? (sin liberar la vieja aún)   */
+        if (!free_object_area(dest_x, dest_y, &cand_shape, obj)) {
             my_mutex_unlock(&canvas_mutex);
             busy_wait_ms(50);
             my_thread_yield();
-            continue;
+            continue;                       /* reintentar paso    */
         }
 
-        erase_prev_figure(prev_x, prev_y, &obj->shape);
-
-        if (num_rotations > 0 && p > 0 && p % steps_per_rotation == 0 && applied_rotations < num_rotations) {
-            ShapeMatrix copy = obj->shape;
-            rotate_shape_matrix(&copy, 90);
-
-            int cx_old = obj->shape.cols / 2;
-            int cy_old = obj->shape.rows / 2;
-            int cx_new = copy.cols / 2;
-            int cy_new = copy.rows / 2;
-            int delta_x = cx_old - cx_new;
-            int delta_y = cy_old - cy_new;
-
-            int new_x = obj->current_x + delta_x;
-            int new_y = obj->current_y + delta_y;
-
-            if (!free_object_area(new_x, new_y, &copy, obj)) {
-                object_area_assignment(obj->current_x, obj->current_y, &obj->shape, obj->id);
-                my_mutex_unlock(&canvas_mutex);
-                busy_wait_ms(50);
-                my_thread_yield();
-                continue;
-            }
-
-            obj->shape = copy;
-            obj->current_x = new_x;
-            obj->current_y = new_y;
-            applied_rotations++;
-            current_rotation = (current_rotation + 90) % 360;
-        }
-
-        fx += dx;
-        fy += dy;
-        obj->current_x = cur_x;
-        obj->current_y = cur_y;
-
-        draw_curr_figure(cur_x, cur_y, &obj->shape);
-        object_area_assignment(cur_x, cur_y, &obj->shape, obj->id);
-
-        my_mutex_unlock(&canvas_mutex);
-
-        send_client_canvas(canvas);
-        busy_wait_ms(delay_step);
-        my_thread_yield();
-
-        prev_x = cur_x;
-        prev_y = cur_y;
-        step_done++;
-        p++;
-    }
-
-skip_loop:
-    my_mutex_lock(&canvas_mutex);
-    if (exploded) {
-        printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
-    
+        /* 2️⃣  Liberar área antigua y dibujar la nueva               */
         object_area_clean(obj->current_x, obj->current_y, &obj->shape, obj->id);
         erase_prev_figure(obj->current_x, obj->current_y, &obj->shape);
-    
+
+        obj->shape      = cand_shape;       /* commit forma nueva */
+        obj->current_x  = dest_x;
+        obj->current_y  = dest_y;
+
+        if (will_rotate) applied_rotations++;
+
+        draw_curr_figure(dest_x, dest_y, &obj->shape);
+        object_area_assignment(dest_x, dest_y, &obj->shape, obj->id);
+
+        my_mutex_unlock(&canvas_mutex);
+        /* ---------------------------------------------------------- */
+
+        send_client_canvas(canvas);
+
+        /* avanzar acumuladores flotantes para el próximo ciclo       */
+        fx += dx;
+        fy += dy;
+        ++p;
+
+        busy_wait_ms(delay_step);
+        my_thread_yield();
+    }
+
+    /* ---------------  POST-LOOP: LIMPIEZA / EXPLOSIÓN -------------- */
+    my_mutex_lock(&canvas_mutex);
+
+    if (exploded) {
+        printf("💥 EXPLOSIÓN: obj=%d no completó su animación\n", obj->id);
+
+        object_area_clean(obj->current_x, obj->current_y, &obj->shape, obj->id);
+        erase_prev_figure(obj->current_x, obj->current_y, &obj->shape);
+
         explotion_draw(obj->current_x, obj->current_y);
         send_client_canvas(canvas);
-        busy_wait_ms(1000); // mostrar la explosión 1s
-    
+        busy_wait_ms(1000);
         erase_explotion(obj->current_x, obj->current_y);
-        send_client_canvas(canvas); // mostrar canvas limpio
     } else {
         printf("🧹 OBJ %d — Entrando a cleanup en (%d,%d)\n", obj->id, obj->current_x, obj->current_y);
         erase_final_figure(obj);
     }
-    my_mutex_unlock(&canvas_mutex);
 
+    my_mutex_unlock(&canvas_mutex);
     send_client_canvas(canvas);
 
-    float percentage = (float)step_done * 100 / steps;
+    float percentage = (float)p * 100 / steps;
     printf("✅ OBJ %d finalizó en posición (%d, %d), avance: %.1f%%\n",
            obj->id, obj->current_x, obj->current_y, percentage);
 
@@ -377,23 +410,28 @@ skip_loop:
     return NULL;
 }
 
-
-
+// Bandera de ejecución controlada por señal (Ctrl-C).
+// Entrada: modificada externamente por el handler de señal.
+// Salida: se consulta en el bucle principal para seguir corriendo o detener.
 static volatile sig_atomic_t running = 1;
 
 
+// Punto de entrada principal del servidor de animación.
+// Entrada: nombre del archivo de configuración `.ini`.
+// Salida: lanza el servidor, carga objetos, inicia animaciones y atiende monitores.
 void run_server(const char* cfg)
 {
+    // Limpia el mapa de ocupación de canvas.
     memset(canvas_owner, 0, sizeof(canvas_owner));
 
-    /* 1. Leer configuración global (canvas + monitores) */
+    /* 1. Leer configuración general (dimensiones del canvas y monitores) */
     CanvasConfig config;
     if (read_config(cfg, &config) != 0) {
         fprintf(stderr, "❌ No se pudo leer %s\n", cfg);
         exit(EXIT_FAILURE);
     }
 
-    /* 2. Leer objetos desde el mismo .ini */
+    /* 2. Cargar objetos desde el archivo .ini */
     AnimatedObject objects[MAX_OBJECTS];
     int objetct_total = 0;
     if (object_load_from_ini(cfg, objects, &objetct_total) < 0) {
@@ -401,6 +439,7 @@ void run_server(const char* cfg)
         exit(EXIT_FAILURE);
     }
 
+    // Mostrar resumen de los objetos cargados
     printf("📦 Objetos cargados (%d):\n", objetct_total);
     for (int i = 0; i < objetct_total; i++) {
         AnimatedObject* o = &objects[i];
@@ -409,18 +448,19 @@ void run_server(const char* cfg)
                o->scheduler, o->tickets, o->time_start, o->time_end, o->deadline);
     }
 
+    // Asignar configuración global
     canvas_width  = config.width;
     canvas_height = config.height;
     num_monitors  = config.num_monitors;
 
-    /* 4. Canvas inicial (relleno con puntos) */
+    /* 4. Inicializar canvas: rellenar con puntos */
     for (int r = 0; r < canvas_height; r++)
         memset(canvas[r], '.', canvas_width);
 
-    /* 5. Mutex global del canvas */
+    /* 5. Inicializar mutex global del canvas */
     my_mutex_init(&canvas_mutex);
 
-    /* 6. Socket de escucha */
+    /* 6. Crear socket servidor y aceptar conexiones */
     int server_fd = create_server_socket(PORT);
 
     printf("🖼️ Canvas: %dx%d | Monitores esperados: %d\n",
@@ -432,10 +472,10 @@ void run_server(const char* cfg)
         printf("✅ Monitor %d conectado.\n", i);
     }
 
-    /* 3. Inicializar temporizador base */
+    /* 3. Inicializar temporizador global */
     init_timer();
 
-    /* 7. Inicializar schedulers y crear los hilos-objeto */
+    /* 7. Iniciar schedulers y lanzar hilos de animación */
     scheduler_init();
 
     for (int i = 0; i < objetct_total; i++) {
@@ -449,16 +489,16 @@ void run_server(const char* cfg)
         copy->id = i + 1;
         active_objects[copy->id - 1] = copy;
 
-        // 🚀 Determinar si debe usar LOTTERY según velocidad requerida
+        // Determina si usar LOTTERY basado en velocidad requerida
         int dx = abs(copy->x_end - copy->x_start);
         int dy = abs(copy->y_end - copy->y_start);
-        float distance = dx > dy ? dx : dy; // pasos requeridos (como en animación)
+        float distance = dx > dy ? dx : dy;
 
         long duration = copy->time_end - copy->time_start;
-        if (duration == 0) duration = 1; // prevenir división por cero
+        if (duration == 0) duration = 1;
 
-        float required_speed = distance / (float)duration; // pasos por segundo
-        float speed_threshold = 20.0f; // si supera esto, usar LOTTERY
+        float required_speed = distance / (float)duration;
+        float speed_threshold = 20.0f;
 
         if (required_speed > speed_threshold) {
             printf("🚀 OBJ %d necesita velocidad alta (%.1f pasos/s) → usando LOTTERY\n",
@@ -485,15 +525,15 @@ void run_server(const char* cfg)
         printf("✅ Hilo creado para objeto %d (tid=%d)\n", i, tid);
     }
 
-    /* 8. Arrancar el scheduler mixto */
+    /* 8. Ejecutar el scheduler mixto (RT + Lottery + RR) */
     scheduler_run();
 
-    /* 9. Bucle principal: mantiene vivo el proceso hasta Ctrl-C */
+    /* 9. Mantener el servidor vivo hasta que se reciba Ctrl-C */
     while (running) {
         busy_wait_ms(100);
     }
 
-    /* 10. Cierre ordenado: sockets de clientes y servidor */
+    /* 10. Cierre ordenado del servidor */
     printf("\n🔻 Cerrando servidor...\n");
     for (int i = 0; i < num_monitors; i++)
         if (clients[i] > 0) close(clients[i]);
@@ -501,4 +541,5 @@ void run_server(const char* cfg)
 
     return;
 }
+
 

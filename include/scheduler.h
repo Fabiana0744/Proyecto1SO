@@ -28,8 +28,8 @@ void scheduler_set_type(scheduler_type_t type);
 
 extern tcb* current;
 
-long get_current_time_ms();    // 🕒 función para obtener tiempo actual en ms
-extern long start_time_ms;     // 🕒 variable global compartida
+long get_current_time_ms();    //función para obtener tiempo actual en ms
+extern long start_time_ms;     //variable global compartida
 
 // utils.h
 void init_timer();

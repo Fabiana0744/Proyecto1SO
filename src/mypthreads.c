@@ -3,28 +3,32 @@
 #include <stdlib.h>
 #include <string.h>
 #include "scheduler.h"
-#include <stdio.h>  // Para fprintf
+#include <stdio.h>
 #include <stdint.h>
 #include <sys/time.h>
 
+#define MAX_THREADS 128  // Define el número máximo de hilos que el sistema puede manejar.
 
-#define MAX_THREADS 128
+tcb* current = NULL;                 // Hilo actualmente en ejecución.
+static tcb* ready_queue = NULL;     // Cola de hilos listos para ejecutar.
+ucontext_t main_context;            // Contexto del hilo principal.
+static int next_tid = 1;            // Contador para asignar IDs únicos a los hilos.
+static tcb* all_threads[MAX_THREADS] = { NULL };  // Arreglo global de punteros a todos los hilos.
 
-tcb* current = NULL;
-static tcb* ready_queue = NULL;
-ucontext_t main_context;
-static int next_tid = 1;
-static tcb* all_threads[MAX_THREADS] = { NULL };
+static long program_start_ms = 0;   // Marca de tiempo de inicio del programa en milisegundos.
 
-
-static long program_start_ms = 0;
-
+// Inicializa el temporizador global al momento de arranque del programa.
+// Entrada: ninguna.
+// Salida: almacena el tiempo base en program_start_ms.
 void init_timer() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     program_start_ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+// Retorna el tiempo actual en milisegundos desde el inicio del programa.
+// Entrada: ninguna.
+// Salida: tiempo actual relativo al inicio del programa.
 long get_current_time_ms() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -32,20 +36,27 @@ long get_current_time_ms() {
     return now - program_start_ms;
 }
 
+// Realiza una espera activa durante un número específico de milisegundos.
+// Entrada: tiempo a esperar.
+// Salida: ninguna.
 void busy_wait_ms(int ms) {
     long start = get_current_time_ms();
     while ((get_current_time_ms() - start) < ms);
 }
 
+// Función contenedora que ejecuta la rutina del hilo y finaliza.
+// Entrada: puntero empaquetado con función y argumento.
+// Salida: invoca my_thread_end con el valor de retorno.
 static void thread_start_wrapper(uintptr_t arg_ptr) {
     my_thread_wrapper_args* wrapper = (my_thread_wrapper_args*) arg_ptr;
     void* ret = wrapper->func(wrapper->arg);
-    free(wrapper);            // liberamos la estructura
-    my_thread_end(ret);       // finalizamos el hilo
+    free(wrapper);
+    my_thread_end(ret);
 }
 
-
-
+// Extrae el siguiente hilo listo de la cola de ejecución.
+// Entrada: ninguna.
+// Salida: puntero al siguiente hilo o NULL si la cola está vacía.
 static tcb* dequeue() {
     if (!ready_queue) return NULL;
     tcb* t = ready_queue;
@@ -53,7 +64,9 @@ static tcb* dequeue() {
     return t;
 }
 
-
+// Crea un nuevo hilo con el planificador y tiempos indicados.
+// Entrada: puntero a ID, rutina, argumento, tipo de scheduler, tickets y restricciones de tiempo.
+// Salida: 0 si se creó con éxito, -1 si falló.
 int my_thread_create(my_thread_t* thread,
                      void* (*start_routine)(void*),
                      void* arg,
@@ -83,14 +96,10 @@ int my_thread_create(my_thread_t* thread,
     new_thread->next = NULL;
     new_thread->must_cleanup = false;
     new_thread->finished = false;
-
     new_thread->sched_type = sched;
-
-    // ⏱️ Todos los hilos tienen restricciones de tiempo
     new_thread->time_start = time_start;
     new_thread->time_end = time_end;
 
-    // ⚙️ Configurar según scheduler
     switch (sched) {
         case SCHED_RR:
             break;
@@ -121,18 +130,22 @@ int my_thread_create(my_thread_t* thread,
     return 0;
 }
 
-
+// Cede voluntariamente el uso del procesador a otro hilo.
+// Entrada: ninguna.
+// Salida: 0 si se cedió correctamente.
 int my_thread_yield(void) {
-    if (current == NULL) return 0;  // prevenir yield sin contexto
+    if (current == NULL) return 0;
     scheduler_yield();
     return 0;
 }
 
-
+// Finaliza el hilo actual y libera sus recursos.
+// Entrada: valor de retorno del hilo.
+// Salida: transfiere el control al siguiente hilo o al hilo principal.
 void my_thread_end(void* retval) {
     current->state = FINISHED;
     current->retval = retval;
-    current->finished = true;  // 🔁 importante para saber que el hilo terminó
+    current->finished = true;
 
     printf("✅ Hilo con tid = %d terminó su animación\n", current->tid);
 
@@ -155,8 +168,9 @@ void my_thread_end(void* retval) {
     }
 }
 
-
-
+// Espera a que el hilo especificado finalice.
+// Entrada: ID del hilo y puntero para capturar el valor de retorno.
+// Salida: 0 si se unió correctamente, -1 si falló.
 int my_thread_join(my_thread_t thread, void** retval) {
     if (thread <= 0 || thread >= MAX_THREADS || !all_threads[thread]) return -1;
     tcb* target = all_threads[thread];
@@ -179,6 +193,9 @@ int my_thread_join(my_thread_t thread, void** retval) {
     return 0;
 }
 
+// Marca un hilo como detached para liberar recursos automáticamente.
+// Entrada: ID del hilo a desacoplar.
+// Salida: 0 si se marcó correctamente, -1 si falló.
 int my_thread_detach(my_thread_t thread) {
     if (thread <= 0 || thread >= MAX_THREADS || !all_threads[thread]) return -1;
     tcb* target = all_threads[thread];
@@ -194,37 +211,39 @@ int my_thread_detach(my_thread_t thread) {
     return 0;
 }
 
-
-
+// Cambia dinámicamente el tipo de planificador y parámetros temporales de un hilo.
+// Entrada: ID del hilo, nuevo scheduler y parámetros asociados.
+// Salida: 0 si se aplicaron los cambios, -1 si hubo error.
 int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
     int tickets, long time_start, long time_end, long deadline) {
     if (tid <= 0 || tid >= MAX_THREADS || !all_threads[tid]) {
-    return -1;
+        return -1;
     }
 
     tcb* target = all_threads[tid];
-    target->sched_type = new_sched; // primero asignamos tipo
+    target->sched_type = new_sched;
 
     switch (new_sched) {
     case SCHED_RR:
-    break;
+        break;
     case SCHED_LOTTERY:
-    target->tickets = (tickets > 0) ? tickets : 1;
-    break;
+        target->tickets = (tickets > 0) ? tickets : 1;
+        break;
     case SCHED_REALTIME:
-    target->time_start = time_start;
-    target->time_end = time_end;
-    target->deadline = deadline;
-    break;
+        target->time_start = time_start;
+        target->time_end = time_end;
+        target->deadline = deadline;
+        break;
     default:
-    return -1;
+        return -1;
     }
 
-    //scheduler_add(target);  // aquí ya sabemos su tipo
     return 0;
 }
 
-
+// Inicializa un mutex.
+// Entrada: puntero al mutex.
+// Salida: 0 si se inicializó correctamente, -1 si falló.
 int my_mutex_init(my_mutex_t* mutex) {
     if (!mutex) return -1;
     mutex->locked = 0;
@@ -232,48 +251,49 @@ int my_mutex_init(my_mutex_t* mutex) {
     return 0;
 }
 
-
+// Intenta adquirir un mutex de forma bloqueante.
+// Entrada: puntero al mutex.
+// Salida: 0 si se adquirió, -1 si falló.
 int my_mutex_lock(my_mutex_t* mutex) {
-    // Validación de puntero nulo
     if (!mutex) {
         fprintf(stderr, "[ERROR] mutex es NULL en my_mutex_lock()\n");
         return -1;
     }
 
-    // Validación de dirección inválida (opcional pero útil)
     if ((void*)mutex < (void*)0x1000) {
         fprintf(stderr, "[ERROR] mutex apunta a dirección inválida: %p\n", (void*)mutex);
         return -1;
     }
 
-    // Mensaje de depuración antes de intentar bloquear
     printf("🔐 [LOCK] Intentando mutex %p | locked=%d | owner=%d\n", 
            (void*)mutex, mutex->locked, mutex->owner);
 
-    // Busy wait hasta obtener el lock
     while (__sync_lock_test_and_set(&mutex->locked, 1)) {
-        my_thread_yield();  // Evita consumo innecesario de CPU
+        my_thread_yield();
     }
 
     mutex->owner = current->tid;
-
-    // Confirmación de que el lock fue adquirido
     printf("✅ [LOCK] mutex %p adquirido por tid=%d\n", (void*)mutex, current ? current->tid : -1);
 
     return 0;
 }
 
-
+// Intenta adquirir un mutex sin bloquear.
+// Entrada: puntero al mutex.
+// Salida: 0 si se adquirió, 1 si estaba ocupado, -1 si hubo error.
 int my_mutex_trylock(my_mutex_t* mutex) {
     if (!mutex) return -1;
 
     if (__sync_lock_test_and_set(&mutex->locked, 1) == 0) {
         mutex->owner = current->tid;
-        return 0;  // éxito
+        return 0;
     }
-    return 1;  // ocupado
+    return 1;
 }
 
+// Libera un mutex.
+// Entrada: puntero al mutex.
+// Salida: 0 si se liberó, -1 si hubo error.
 int my_mutex_unlock(my_mutex_t* mutex) {
     if (!mutex || mutex->owner != current->tid) return -1;
     mutex->owner = -1;
@@ -281,11 +301,12 @@ int my_mutex_unlock(my_mutex_t* mutex) {
     return 0;
 }
 
+// Destruye un mutex (opcional en esta implementación).
+// Entrada: puntero al mutex.
+// Salida: 0 si se limpió correctamente, -1 si falló.
 int my_mutex_destroy(my_mutex_t* mutex) {
     if (!mutex) return -1;
-    // No necesitamos liberar nada, es una estructura simple
     mutex->locked = 0;
     mutex->owner = -1;
     return 0;
 }
-

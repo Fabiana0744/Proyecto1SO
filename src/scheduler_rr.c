@@ -1,24 +1,34 @@
-//scheduler_rr.c:
+// scheduler_rr.c
+
 #include "scheduler.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-static tcb* rr_queue = NULL;
-extern ucontext_t main_context;
-extern tcb* current;
+static tcb* rr_queue = NULL;          // Cola de hilos del planificador Round Robin.
+
+extern ucontext_t main_context;       // Contexto principal del programa.
+extern tcb* current;                  // Hilo actualmente en ejecución.
 
 /* scheduler_rr.c */
-#define RR_QUANTUM_MS  200      /* ⇦  ajuste fácil */
+#define RR_QUANTUM_MS  200  // Define el tiempo de ejecución asignado a cada hilo (quantum).
 
+// Inicializa el planificador Round Robin.
+// Entrada: ninguna.
+// Salida: la cola se vacía y queda lista para uso.
 void rr_init() {
     rr_queue = NULL;
 }
 
+// Devuelve todos los hilos registrados en la cola Round Robin.
+// Entrada: ninguna.
+// Salida: puntero al primer hilo en la cola.
 tcb* get_all_rr_threads(void) {
     return rr_queue;
 }
 
-
+// Añade un hilo a la cola del planificador Round Robin.
+// Entrada: puntero al hilo a añadir.
+// Salida: el hilo se encola al final de la lista.
 void rr_add(tcb* thread) {
     printf("🌀 [RR] Añadiendo hilo tid=%d al scheduler Round Robin\n", thread->tid);
     thread->next = NULL;
@@ -31,6 +41,9 @@ void rr_add(tcb* thread) {
     }
 }
 
+// Selecciona el siguiente hilo listo que cumplió su tiempo de inicio.
+// Entrada: ninguna.
+// Salida: hilo listo para ejecutar, o NULL si no hay ninguno.
 tcb* rr_next(void) {
     if (!rr_queue) return NULL;
 
@@ -38,10 +51,9 @@ tcb* rr_next(void) {
     tcb* prev = NULL;
     tcb* curr = rr_queue;
 
-    // Buscar primer hilo listo y con time_start cumplido
     while (curr) {
         if (curr->state == READY && now >= curr->time_start * 1000) {
-            // Sacar de la cola
+            // Se remueve el hilo de la cola
             if (prev) {
                 prev->next = curr->next;
             } else {
@@ -49,7 +61,7 @@ tcb* rr_next(void) {
             }
             curr->next = NULL;
 
-            // ⏱️ Marca de arranque
+            // Se actualizan marcas de tiempo para control de quantum
             curr->last_start_ms = now;
             curr->consumed_ms = 0;
 
@@ -60,18 +72,19 @@ tcb* rr_next(void) {
         curr = curr->next;
     }
 
-    // Ningún hilo con time_start cumplido
     return NULL;
 }
 
+// Cede la CPU si el hilo actual agotó su quantum.
+// Entrada: ninguna.
+// Salida: realiza cambio de contexto si se agota el quantum; si no, solo actualiza el tiempo.
 void rr_yield(void) {
     long now = get_current_time_ms();
     long elapsed = now - current->last_start_ms;
     current->consumed_ms += elapsed;
 
-    // ¿agotó su quantum?
     if (current->consumed_ms >= RR_QUANTUM_MS) {
-        rr_add(current);  // ➜ al final de la cola
+        rr_add(current);  // Reencola al final
         tcb* next = rr_next();
         if (next) {
             tcb* prev = current;
@@ -79,11 +92,14 @@ void rr_yield(void) {
             swapcontext(&prev->context, &next->context);
         }
     } else {
-        // Quantum no agotado: solo actualiza marca
+        // Si no agotó su quantum, solo actualiza la marca de tiempo
         current->last_start_ms = now;
     }
 }
 
+// Finaliza el hilo actual y transfiere el control al siguiente disponible.
+// Entrada: ninguna.
+// Salida: realiza cambio de contexto o vuelve al hilo principal si no hay más hilos.
 void rr_end() {
     tcb* next = rr_next();
     if (next) {
@@ -95,6 +111,9 @@ void rr_end() {
     }
 }
 
+// Inicia la ejecución del primer hilo listo en Round Robin.
+// Entrada: ninguna.
+// Salida: cambia el contexto al primer hilo o muestra mensaje si no hay hilos listos.
 void rr_run() {
     tcb* next = rr_next();
     if (next) {
