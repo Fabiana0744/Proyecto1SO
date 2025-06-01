@@ -115,25 +115,28 @@ void rotate_shape_matrix(ShapeMatrix* shape, int angle) {
 // Verifica si una figura puede colocarse en una posición sin invadir otras.
 // Entrada: posición (x, y), puntero a la figura, puntero al objeto correspondiente.
 // Salida: true si el área está libre o solo contiene el mismo objeto, false si hay colisión.
-bool free_object_area(int x, int y, ShapeMatrix* shape, AnimatedObject* obj) {
-    for (int i = 0; i < shape->rows; i++) {
-        for (int j = 0; j < shape->cols; j++) {
-            if (shape->data[i][j] == ' ') continue;
+bool free_object_area(int x, int y, ShapeMatrix* shape, AnimatedObject* obj, float margin_f) {
+    int margin = (int)(margin_f + 0.999);  // redondeo hacia arriba
 
-            int cx = x + j;
-            int cy = y + i;
+    int xmin = x - margin;
+    int ymin = y - margin;
+    int xmax = x + shape->cols + margin;
+    int ymax = y + shape->rows + margin;
 
+    for (int cy = ymin; cy < ymax; cy++) {
+        for (int cx = xmin; cx < xmax; cx++) {
             if (cx < 0 || cx >= canvas_width || cy < 0 || cy >= canvas_height)
                 continue;
 
             int ocupante = canvas_owner[cy][cx];
             if (ocupante != 0 && ocupante != obj->id) {
-                return false;
+                return false;  // hay colisión con otro objeto
             }
         }
     }
     return true;
 }
+
 
 // Asigna las celdas ocupadas por una figura a su ID en canvas_owner.
 // Entrada: posición (x, y), puntero a figura, ID del objeto.
@@ -345,7 +348,7 @@ void* object_animate(void* arg)
         my_mutex_lock(&canvas_mutex);
 
         /* 1️⃣  ¿ÁREA DESTINO DISPONIBLE? (sin liberar la vieja aún)   */
-        if (!free_object_area(dest_x, dest_y, &cand_shape, obj)) {
+        if (!free_object_area(dest_x, dest_y, &cand_shape, obj, 0.0f))  {
             my_mutex_unlock(&canvas_mutex);
             busy_wait_ms(50);
             my_thread_yield();
