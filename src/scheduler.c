@@ -1,5 +1,3 @@
-// scheduler.c
-
 #include "scheduler.h"
 #include <stdlib.h>
 #include <stdio.h>

@@ -86,8 +86,6 @@ int my_thread_chsched(my_thread_t tid, scheduler_type_t new_sched,
     int tickets, long time_start, long time_end, long deadline);
 
 
-// util.h
-
 // Realiza una espera activa por la cantidad de milisegundos indicada.
 // Entrada: tiempo en milisegundos.
 // Salida: ninguna.

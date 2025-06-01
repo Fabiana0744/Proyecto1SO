@@ -18,7 +18,7 @@
 #define COVERAGE_THRESHOLD 0.85f
 #define TIME_THRESHOLD 2
 
-// --- 🔧 Variables globales ---
+// --- Variables globales ---
 
 // Representa el canvas principal donde se dibujan los objetos.
 // Entrada: modificada por los hilos de animación.
@@ -45,7 +45,6 @@ int num_monitors = 0;       // Cantidad actual de monitores conectados.
 int canvas_width = 0;       // Ancho total del canvas.
 int canvas_height = 0;      // Alto total del canvas.
 
-// --- 🟢 Enviar canvas dividido a los monitores ---
 
 // Envía una porción del canvas a cada monitor conectado.
 // Entrada: matriz canvas completa con contenido actual.
@@ -453,14 +452,14 @@ void run_server(const char* cfg)
     canvas_height = config.height;
     num_monitors  = config.num_monitors;
 
-    /* 4. Inicializar canvas: rellenar con puntos */
+    // Inicializar canvas: rellenar con puntos
     for (int r = 0; r < canvas_height; r++)
         memset(canvas[r], '.', canvas_width);
 
-    /* 5. Inicializar mutex global del canvas */
+    // Inicializar mutex global del canvas
     my_mutex_init(&canvas_mutex);
 
-    /* 6. Crear socket servidor y aceptar conexiones */
+    // Crear socket servidor y aceptar conexiones
     int server_fd = create_server_socket(PORT);
 
     printf("🖼️ Canvas: %dx%d | Monitores esperados: %d\n",
@@ -472,10 +471,10 @@ void run_server(const char* cfg)
         printf("✅ Monitor %d conectado.\n", i);
     }
 
-    /* 3. Inicializar temporizador global */
+    // Inicializar temporizador global
     init_timer();
 
-    /* 7. Iniciar schedulers y lanzar hilos de animación */
+    // Iniciar schedulers y lanzar hilos de animación 
     scheduler_init();
 
     for (int i = 0; i < objetct_total; i++) {
@@ -525,15 +524,15 @@ void run_server(const char* cfg)
         printf("✅ Hilo creado para objeto %d (tid=%d)\n", i, tid);
     }
 
-    /* 8. Ejecutar el scheduler mixto (RT + Lottery + RR) */
+    // Ejecutar el scheduler mixto (RT + Lottery + RR)
     scheduler_run();
 
-    /* 9. Mantener el servidor vivo hasta que se reciba Ctrl-C */
+    // Mantener el servidor vivo hasta que se reciba Ctrl-C
     while (running) {
         busy_wait_ms(100);
     }
 
-    /* 10. Cierre ordenado del servidor */
+    // Cierre ordenado del servidor
     printf("\n🔻 Cerrando servidor...\n");
     for (int i = 0; i < num_monitors; i++)
         if (clients[i] > 0) close(clients[i]);

@@ -1,5 +1,3 @@
-// scheduler_lottery.c
-
 #include "scheduler.h"
 #include <stdlib.h>
 #include <time.h>

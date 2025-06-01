@@ -1,5 +1,3 @@
-// scheduler_rr.c
-
 #include "scheduler.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +7,6 @@ static tcb* rr_queue = NULL;          // Cola de hilos del planificador Round Ro
 extern ucontext_t main_context;       // Contexto principal del programa.
 extern tcb* current;                  // Hilo actualmente en ejecución.
 
-/* scheduler_rr.c */
 #define RR_QUANTUM_MS  200  // Define el tiempo de ejecución asignado a cada hilo (quantum).
 
 // Inicializa el planificador Round Robin.

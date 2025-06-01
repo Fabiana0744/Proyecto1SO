@@ -1,5 +1,3 @@
-/* src/animar.c */
-
 // Punto de entrada principal del programa animador.
 // Entrada: argumentos de línea de comandos para especificar modo y parámetros.
 // Salida: ejecuta el servidor o cliente según los flags; retorna 0 si tuvo éxito o EXIT_FAILURE si hubo error.
